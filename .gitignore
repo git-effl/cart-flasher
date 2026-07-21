@@ -10,3 +10,7 @@ maker.sh
 *._
 __pycache__/
 *.pyc
+
+# Local environment
+.env
+.env.local
