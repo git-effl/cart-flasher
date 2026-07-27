@@ -1,12 +1,17 @@
 #include "menu.h"
+
 #include <nds.h>
+
+#include <algorithm>
+#include <cstdio>
+#include <cstdlib> // rand(); the seed itself lives in main()
+#include <cstring>
+#include <strings.h> // strcasecmp(); POSIX, so there's no <c...> spelling of it
+
 #include "ui.h"
 #include "nds_platform.h"
 #include "device.h"
 #include "filebrowser.h"
-#include <algorithm>
-#include <cstdio>
-#include <cstdlib> // rand(); the seed itself lives in main()
 
 // Wording follows Sanras's flashcart guide, which quotes this tool verbatim
 // ("flashrom", "key combo", "Back up flash", "Write flash") -- don't reword.

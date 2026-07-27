@@ -1,10 +1,13 @@
 #include "ui.h"
+
 #include <nds.h>
-#include "font.h"
+
 #include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+
+#include "font.h"
 
 void InitializeScreens(void) {
 	REG_DISPCNT = MODE_3_2D | DISPLAY_BG3_ACTIVE;

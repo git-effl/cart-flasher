@@ -1,15 +1,19 @@
 #include "filebrowser.h"
+
 #include <nds.h>
+
+#include <algorithm>
+#include <cstdio>
+#include <cstring>
+#include <vector>
+
+#include <dirent.h>
+#include <strings.h> // strcasecmp(); POSIX, so there's no <c...> spelling of it
+#include <sys/stat.h>
+
 #include "ui.h"
 #include "menu.h"
 #include "nds_platform.h"
-#include <dirent.h>
-#include <sys/stat.h>
-#include <cstring>
-#include <cstdio>
-#include <strings.h>
-#include <vector>
-#include <algorithm>
 
 namespace {
 

@@ -1,8 +1,10 @@
-#include <fat.h>
 #include <nds.h>
 #include <nds/arm9/dldi.h>
+#include <fat.h>
+
 #include <cstdlib>
 #include <ctime>
+
 #include "device.h"
 #include "ui.h"
 #include "menu.h"

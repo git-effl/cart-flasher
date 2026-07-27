@@ -1,17 +1,23 @@
 #include "nds_platform.h"
+
 #include <nds.h>
 #include <nds/arm9/dldi.h> // dldiGetMode(), io_dldi_data -- not pulled in by nds.h
 #include <fat.h>
+
+#include <algorithm>
+#include <cstdarg>
+#include <cstdio>
+#include <cstdlib>
+#include <new>
+
+#include <sys/stat.h>
+#include <unistd.h>
+
 #include "device.h"
+#include "ui.h"
 #include "blowfish_ntr_bin.h"
 #include "blowfish_dev_bin.h"
 #include "blowfish_retail_bin.h"
-#include "ui.h"
-#include <cstdio>
-#include <cstdarg>
-#include <sys/stat.h>
-#include <unistd.h>
-#include <new>
 
 int progressCount = 0;
 
