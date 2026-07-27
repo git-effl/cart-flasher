@@ -16,8 +16,14 @@ using std::uint32_t;
 #define PAGE_ROUND_UP(x, s) ( ((x) + (s)-1)  & (~((s)-1)) )
 #define PAGE_ROUND_DOWN(x, s) ( (x) & (~((s)-1)) )
 
+// Spelled exactly as libnds spells it in ndstypes.h, unsigned included. An
+// identical macro redefinition is legal and silent, so this collides benignly
+// no matter which header lands first -- the signed version warned whenever a
+// .cpp reached device.h before <nds.h>. Unsigned is also just correct: 1 << 31
+// is signed overflow. The #ifndef stays so a platform that already defines BIT
+// keeps its own.
 #ifndef BIT
-#define BIT(n) (1 << (n))
+#define BIT(n) (1u << (n))
 #endif
 namespace flashcart_core {
 class Flashcart {

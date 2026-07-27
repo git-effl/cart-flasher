@@ -3,8 +3,6 @@
 
 #include "../device.h"
 
-#define BIT(n) (1 << (n))
-
 namespace flashcart_core {
 using platform::logMessage;
 using platform::showProgress;
