@@ -46,7 +46,6 @@
 #define STD_COLOR_FONT COLOR_WHITE
 
 void InitializeScreens(void);
-void setPixel(u16 *screen, int r, int c, u16 color);
 void ClearScreen(u16 *screen, u16 color);
 void DrawRectangle(u16 *screen, int x, int y, int width, int height, u16 color);
 
@@ -58,7 +57,7 @@ void DrawListRow(u16 *screen, int y, bool selected, u16 highlightColor, const ch
 
 void SetProgressOverride(uint32_t current, uint32_t total);
 void ShowProgress(u16 *screen, uint32_t current, uint32_t total, const char* status);
-void DrawHeader(u16* screen, const char *str, int offset);
+void DrawHeader(u16* screen, const char *str);
 void DrawFooter(int loglevel);
 
 // Defined in menu.cpp (where it's changed); declared extern here since

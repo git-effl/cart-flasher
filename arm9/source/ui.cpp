@@ -23,28 +23,34 @@ void InitializeScreens(void) {
 	REG_BG3PD_SUB = 1 << 8;
 }
 
-void setPixel(u16 *screen, int row, int col, u16 color) {
-	screen[row * SCREEN_WIDTH + col] = color | BIT(15);
-}
-
 void ClearScreen(u16 *screen, u16 color) {
-	int width = SCREEN_HEIGHT * SCREEN_WIDTH;
-	for (int i = 0; i < width; i++) {
-		screen[i] = color | BIT(15);
-	}
+	// One blocking 32-bit DMA fill (the colour duplicated into both halves)
+	// instead of 49152 halfword stores. Channel 3 is free: libncgc drives the
+	// cart with plain loads/stores and claims no DMA channel, and a screen
+	// clear never overlaps a transfer anyway.
+	const u32 pixel = color | BIT(15);
+	dmaFillWords(pixel | (pixel << 16), screen, SCREEN_WIDTH * SCREEN_HEIGHT * sizeof(u16));
 }
 
 void DrawRectangle(u16 *screen, int x, int y, int width, int height, u16 color) {
-	for (int c = x; c < x + width; c++) {
-		for (int r = y; r < y + height; r++) {
-			setPixel(screen, r, c, color);
+	const u16 pixel = color | BIT(15);
+	// Row-major: a row is a sequential run of halfwords. The old column-major
+	// order strided a full 512-byte row between every single store.
+	for (int r = y; r < y + height; r++) {
+		u16 *row = screen + (r * SCREEN_WIDTH) + x;
+		for (int c = 0; c < width; c++) {
+			row[c] = pixel;
 		}
 	}
 }
 
 void DrawCharacter(u16 *screen, int character, int x, int y, u16 color) {
+	const u16 pixel = color | BIT(15);
 	for (int yy = 0; yy < FONT_HEIGHT; yy++) {
 		uint8_t charPos = font[character * FONT_HEIGHT + yy];
+		// Row base hoisted out of the pixel loop, so the offset is a multiply
+		// per row instead of one per lit pixel.
+		u16 *row = screen + ((y + yy) * SCREEN_WIDTH) + x;
 		for (int xx = (8 - FONT_WIDTH); xx <= 7; xx++) {
 			if ((charPos >> xx) & 1) {
 				// Bit 7 (MSB) is the glyph's leftmost pixel, bit (8-FONT_WIDTH)
@@ -54,7 +60,7 @@ void DrawCharacter(u16 *screen, int character, int x, int y, u16 color) {
 				// -1..FONT_WIDTH-2 instead of 0..FONT_WIDTH-1) -- present since
 				// this project's first commit, never actually visible because
 				// the shift is uniform across every pixel of every glyph.
-				setPixel(screen, y + yy, x + 7 - xx, color);
+				row[7 - xx] = pixel;
 			}
 		}
 	}
@@ -82,16 +88,21 @@ void DrawString(u16* screen, int x, int y, u16 color, const char *str)
 			x = startx;
 			y += FONT_HEIGHT;
 		}
-		DrawCharacter(screen, str[i], x, y, color);
+		// Cast because `char` is signed under -fsigned-char, which would index
+		// font[] negatively for any byte over 0x7F.
+		DrawCharacter(screen, (unsigned char)str[i], x, y, color);
 		x += FONT_WIDTH;
 	}
 }
 
-void DrawHeader(u16* screen, const char *str, int offset)
+// The title is always centred -- every caller open-coded the same
+// (SCREEN_WIDTH - strlen * FONT_WIDTH) / 2 offset, two of them by hand-counting
+// the literal's length, so there was never a second thing the parameter could be.
+void DrawHeader(u16* screen, const char *str)
 {
 	ClearScreen(screen, COLOR_BLACK);
 	DrawRectangle(screen, 0, 0, SCREEN_WIDTH, FONT_HEIGHT, COLOR_BLUE);
-	DrawString(screen, offset, 0, COLOR_WHITE, str);
+	DrawStringCentered(screen, 0, COLOR_WHITE, str);
 }
 
 // Draws a single selectable list row: a full-width highlight bar behind the
@@ -112,21 +123,49 @@ void DrawListRow(u16 *screen, int y, bool selected, u16 highlightColor, const ch
 void DrawFooter(int loglevel)
 {
 	DrawRectangle(TOP_SCREEN, 0, SCREEN_HEIGHT - FONT_HEIGHT, SCREEN_WIDTH, FONT_HEIGHT, COLOR_BLACK);
-	const char *loglevel_str;
-	//I use a bunch of if statements here because the array that has strings over at ntrboot_flasher's `platform.cpp` is not available here
-	if (loglevel == 0) { loglevel_str = "DEBUG"; }
-	if (loglevel == 1) { loglevel_str = "INFO"; }
-	if (loglevel == 2) { loglevel_str = "NOTICE"; }
-	if (loglevel == 3) { loglevel_str = "WARN"; }
-	if (loglevel == 4) { loglevel_str = "ERROR"; }
+	// Local copy of the level names, since the array in ntrboot_flasher's
+	// `platform.cpp` isn't visible here. The out-of-range fallback matters: the
+	// old if-chain had no else, so any level outside 0-4 left the pointer
+	// uninitialised and printed whatever was on the stack.
+	static const char *const loglevel_names[] = { "DEBUG", "INFO", "NOTICE", "WARN", "ERROR" };
+	const char *loglevel_str = (loglevel >= 0 && loglevel < (int)(sizeof(loglevel_names) / sizeof(loglevel_names[0])))
+		? loglevel_names[loglevel] : "?";
 	DrawStringF(TOP_SCREEN, FONT_WIDTH, SCREEN_HEIGHT - FONT_HEIGHT, COLOR_YELLOW, "<A> Select   <Y> Log: %s", loglevel_str);
 }
 
-// Horizontally centres a single line. Same arithmetic the DrawHeader callers
-// already open-code; single-line only, since a '\n' would throw the width off.
+// Horizontally centres each line on its own width, so a multi-line string reads
+// as a centred block. Centering the whole string off strlen() instead would
+// count the '\n' and every following line into the first line's width, pushing
+// it left and leaving the rest hanging off its edge -- which is why callers used
+// to place multi-line confirmation text one DrawString at a time.
 void DrawStringCentered(u16 *screen, int y, u16 color, const char *str)
 {
-	DrawString(screen, (SCREEN_WIDTH - (int)(strlen(str) * FONT_WIDTH)) / 2, y, color, str);
+	while (*str)
+	{
+		const char *eol = strchr(str, '\n');
+		const int len = eol ? (int)(eol - str) : (int)strlen(str);
+
+		if ((y + FONT_HEIGHT) > SCREEN_HEIGHT) return;
+
+		int x = (SCREEN_WIDTH - (len * FONT_WIDTH)) / 2;
+		// A line wider than the screen centres to a negative x, and nothing in
+		// this file clips on the left -- the leading glyphs would be written
+		// behind the framebuffer's base address. Cart names come from the
+		// drivers, so the width isn't fixed at compile time.
+		if (x < 0) x = 0;
+
+		// Drawn per glyph rather than via DrawString because an over-wide line
+		// must be truncated at the right edge, not wrapped to a second row that
+		// DrawString would then align to this line's centred x.
+		for (int i = 0; i < len && (x + FONT_WIDTH) <= SCREEN_WIDTH; i++, x += FONT_WIDTH)
+		{
+			DrawCharacter(screen, (unsigned char)str[i], x, y, color);
+		}
+
+		y += FONT_HEIGHT;
+		if (!eol) break;
+		str = eol + 1;
+	}
 }
 
 void DrawStringF(u16 *screen, int x, int y, u16 color, const char *format, ...)

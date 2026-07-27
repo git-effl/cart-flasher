@@ -85,7 +85,7 @@ void ListDirectory(const char* path, const char* ext, std::vector<FileEntry>& ou
 }
 
 void RenderList(const char* currentPath, const std::vector<FileEntry>& entries, int cursor, int scrollTop, int visibleCount) {
-	DrawHeader(TOP_SCREEN, "Pick a file to write", ((SCREEN_WIDTH - (strlen("Pick a file to write") * FONT_WIDTH)) / 2));
+	DrawHeader(TOP_SCREEN, "Pick a file to write");
 
 	// SCREEN_WIDTH/FONT_WIDTH (42) is one too many: DrawString starts drawing
 	// at x=FONT_WIDTH (this line's own left margin), not x=0, so only 41

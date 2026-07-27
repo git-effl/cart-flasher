@@ -49,7 +49,7 @@ void print_boot_msg(void)
 	// full alarm-red screen — this is a heads-up, not a hazard warning.
 	char header_title[64];
 	sprintf(header_title, "Cart-Flasher %s", CART_FLASHER_VERSION);
-	DrawHeader(TOP_SCREEN, header_title, ((SCREEN_WIDTH - (strlen(header_title) * FONT_WIDTH)) / 2));
+	DrawHeader(TOP_SCREEN, header_title);
 	DrawString(TOP_SCREEN, FONT_WIDTH, FONT_HEIGHT * 2, COLOR_WHITE, bootmsg);
 	DrawString(TOP_SCREEN, FONT_WIDTH, FONT_HEIGHT * 13, COLOR_YELLOW, "<A> Continue   <START> Power off");
 	DrawStringF(TOP_SCREEN, FONT_WIDTH, FONT_HEIGHT * 16, COLOR_GREY, "Developed by @tasken\n%s build - Commit: %s\nBased on work by jason0597 & DS-Homebrew", CART_FLASHER_BUILD_KIND, CART_FLASHER_COMMIT);
@@ -126,9 +126,9 @@ void menu_lvl1(Flashcart* cart)
 	u32 menu_sel = 0;
 	
 	NTRCard card(ntrCardReset);
-	DrawHeader(TOP_SCREEN, "Choose your flashcart", ((SCREEN_WIDTH - (strlen("Choose your flashcart") * FONT_WIDTH)) / 2));
+	DrawHeader(TOP_SCREEN, "Choose your flashcart");
 	DrawFooter(global_loglevel);
-	DrawHeader(BOTTOM_SCREEN, "Flashcart info", ((SCREEN_WIDTH - (14 * FONT_WIDTH)) / 2));
+	DrawHeader(BOTTOM_SCREEN, "Flashcart info");
 	DrawStringF(BOTTOM_SCREEN, FONT_WIDTH, FONT_HEIGHT * 2, COLOR_WHITE, "%s\n\n%s", flashcart_list->at(0)->getAuthor(), flashcart_list->at(0)->getDescription());
 	u32 flashcart_list_size = flashcart_list->size();
 
@@ -173,7 +173,7 @@ void menu_lvl1(Flashcart* cart)
 				// longer, so drawing over it would leave a stale tail.
 				DrawRectangle(TOP_SCREEN, 0, SCREEN_HEIGHT - FONT_HEIGHT, SCREEN_WIDTH, FONT_HEIGHT, COLOR_BLACK);
 				DrawString(TOP_SCREEN, FONT_WIDTH, SCREEN_HEIGHT - FONT_HEIGHT, COLOR_YELLOW, "<B> Back to the cart list");
-				DrawHeader(BOTTOM_SCREEN, "Hardware probe", ((SCREEN_WIDTH - (strlen("Hardware probe") * FONT_WIDTH)) / 2));
+				DrawHeader(BOTTOM_SCREEN, "Hardware probe");
 				LogHardwareProbe(2);
 				WaitPress(KEY_B);
 				DrawFooter(global_loglevel);
@@ -233,14 +233,14 @@ void menu_lvl1(Flashcart* cart)
 					"Press <B> to go back.");
 				WaitPress(KEY_B);
 				ClearScreen(TOP_SCREEN, COLOR_BLACK);
-				DrawHeader(TOP_SCREEN, "Choose your flashcart", ((SCREEN_WIDTH - (strlen("Choose your flashcart") * FONT_WIDTH)) / 2));
+				DrawHeader(TOP_SCREEN, "Choose your flashcart");
 				DrawFooter(global_loglevel);
 				reprintFlag = true;
 			}
 			else
 			{
 				menu_lvl2(cart); //There is a while loop over at menu_lvl2(), the statements underneath won't get executed immediately
-				DrawHeader(TOP_SCREEN, "Choose your flashcart", ((SCREEN_WIDTH - (strlen("Choose your flashcart") * FONT_WIDTH)) / 2));
+				DrawHeader(TOP_SCREEN, "Choose your flashcart");
 				DrawFooter(global_loglevel);
 				reprintFlag = true;
 			}
@@ -253,7 +253,7 @@ void menu_lvl1(Flashcart* cart)
 				DrawListRow(TOP_SCREEN, (i + 2) * FONT_HEIGHT, i == menu_sel, COLOR_ACCENT, flashcart_list->at(i)->getName());
 			}
 			cart = flashcart_list->at(menu_sel);
-			DrawHeader(BOTTOM_SCREEN, "Flashcart info", ((SCREEN_WIDTH - (14 * FONT_WIDTH)) / 2));
+			DrawHeader(BOTTOM_SCREEN, "Flashcart info");
 			DrawStringF(BOTTOM_SCREEN, FONT_WIDTH, FONT_HEIGHT * 2, COLOR_WHITE, "%s\n\n%s", cart->getAuthor(), cart->getDescription());
 		}
 	}
@@ -261,7 +261,7 @@ void menu_lvl1(Flashcart* cart)
 
 void menu_lvl2(Flashcart* cart)
 {
-	DrawHeader(TOP_SCREEN, cart->getName(), ((SCREEN_WIDTH - (strlen(cart->getName()) * FONT_WIDTH)) / 2));
+	DrawHeader(TOP_SCREEN, cart->getName());
 	DrawString(TOP_SCREEN, FONT_WIDTH, SCREEN_HEIGHT - FONT_HEIGHT, COLOR_YELLOW, "<A> Select   <B> Back");
 	int menu_sel = 0;
 	bool dirty = true;
@@ -301,7 +301,7 @@ void menu_lvl2(Flashcart* cart)
 			char writePath[512];
 			if (menu_sel == 1) {
 				if (!BrowseForFile("/cart-backups", ".bin", writePath, sizeof(writePath))) {
-					DrawHeader(TOP_SCREEN, cart->getName(), ((SCREEN_WIDTH - (strlen(cart->getName()) * FONT_WIDTH)) / 2));
+					DrawHeader(TOP_SCREEN, cart->getName());
 					DrawString(TOP_SCREEN, FONT_WIDTH, SCREEN_HEIGHT - FONT_HEIGHT, COLOR_YELLOW, "<A> Select   <B> Back");
 					dirty = true;
 					continue;
@@ -318,7 +318,7 @@ void menu_lvl2(Flashcart* cart)
 			// cart (no driver reaches erase/program from readFlash), and
 			// gating it the same way would train people to mash through the
 			// combo before the destructive path.
-			DrawHeader(TOP_SCREEN, cart->getName(), ((SCREEN_WIDTH - (strlen(cart->getName()) * FONT_WIDTH)) / 2));
+			DrawHeader(TOP_SCREEN, cart->getName());
 			bool confirmed;
 			if (menu_sel == 0)
 			{
@@ -434,7 +434,7 @@ void menu_lvl2(Flashcart* cart)
 			// Back up/Write flash list, not all the way out to the cart
 			// list. No separate "nothing was touched" screen: <B> already
 			// means cancel on both prompts.
-			DrawHeader(TOP_SCREEN, cart->getName(), ((SCREEN_WIDTH - (strlen(cart->getName()) * FONT_WIDTH)) / 2));
+			DrawHeader(TOP_SCREEN, cart->getName());
 			DrawString(TOP_SCREEN, FONT_WIDTH, SCREEN_HEIGHT - FONT_HEIGHT, COLOR_YELLOW, "<A> Select   <B> Back");
 			dirty = true;
 			continue;
