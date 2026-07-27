@@ -1,4 +1,3 @@
-#include <dirent.h>
 #include <fat.h>
 #include <nds.h>
 #include <nds/arm9/dldi.h>
