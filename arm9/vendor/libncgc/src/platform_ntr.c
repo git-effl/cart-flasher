@@ -34,7 +34,7 @@
 #include "platform_ntrcommon.c"
 
 static ncgc_err_t reset(ncgc_ncard_t *const card) {
-    bool (*resetfn)(void) = (bool (*)(void)) card->platform.data.fn_data;
+    bool (*resetfn)(void) = card->platform.data.resetfn_data;
     if (!resetfn) {
         return NCGC_EUNSUP;
     } else if (!resetfn()) {
@@ -51,7 +51,7 @@ void ncgc_platform_ntr_delay(uint32_t delay) {
 
 void ncgc_nplatform_ntr_init(ncgc_ncard_t *card, bool (*resetfn)(void)) {
     card->platform = (ncgc_nplatform_t) {
-        .data = { .fn_data = (void (*)(void)) resetfn },
+        .data = { .resetfn_data = resetfn },
         .reset = reset,
         .send_command = send_command,
         .send_write_command = send_write_command,

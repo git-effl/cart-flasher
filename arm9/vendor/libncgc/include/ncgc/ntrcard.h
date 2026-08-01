@@ -41,6 +41,7 @@ typedef union {
     uint64_t int_data;
     void *ptr_data;
     void (*fn_data)();
+    bool (*resetfn_data)(void);
 } ncgc_nplatform_data_t;
 
 struct ncgc_ncard;

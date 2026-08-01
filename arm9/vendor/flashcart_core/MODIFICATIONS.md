@@ -21,3 +21,5 @@ commit `03d464c` (tag `v1.1.0`). Changes by `@tasken`:
   file's duplicate local `#define BIT`, which shadowed the one in `device.h`
   that both already include above their first use. No behaviour change: every
   use is `BIT(0)`..`BIT(7)` on `uint8_t`, where signed and unsigned agree.
+- 2026-08-01 -- `devices/r4isdhchk.cpp`: removed an unused ntrboot buffer-size
+  local. This is a build-only warning fix with no executable-code change.
