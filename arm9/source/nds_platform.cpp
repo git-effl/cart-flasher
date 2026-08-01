@@ -235,7 +235,11 @@ static char* calculate_backup_path(const char *cart_name) {
 static return_codes_t StreamFlash(flashcart_core::Flashcart* cart, const char* filepath, bool isRead)
 {
 	u32 Flash_size = cart->getMaxLength(); //Get the flashrom size
-	const u32 chunkSize = 0x8000; // 32KB chunks
+	// AK2i, DSTT, R4i Gold 3DS, and R4 SDHC Dual-Core erase/program in 64KB
+	// units. Smaller app chunks either make their drivers read past the buffer
+	// or erase a previously written half-block, so every stream chunk must
+	// cover at least one complete driver page.
+	const u32 chunkSize = 0x10000;
 
 	// Cleared up front, not just before the progress loop: every early return
 	// below (bad SD card, no memory, can't open the file, file too small)
