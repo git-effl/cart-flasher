@@ -22,10 +22,10 @@ jobs:
         id: build
         # NDS_OUT is fixed so every release carries an identically-named asset,
         # keeping the /releases/latest/download/cart_flasher.nds URL permanent.
-        # The version and commit shown on the boot screen are unaffected.
+        # The build identity remains available in the in-app boot screen.
         run: |
           SHORT_SHA=$(printf '%.7s' "$GITHUB_SHA")
-          make NDS_OUT=cart_flasher.nds BANNER_VERSION="Release: ${{ github.ref_name }}" CART_FLASHER_COMMIT="$SHORT_SHA" CART_FLASHER_VERSION=${{ github.ref_name }} CART_FLASHER_BUILD_KIND=Release
+          make NDS_OUT=cart_flasher.nds CART_FLASHER_COMMIT="$SHORT_SHA" CART_FLASHER_VERSION=${{ github.ref_name }} CART_FLASHER_BUILD_KIND=Release
           echo "short_sha=$SHORT_SHA" >> "$GITHUB_OUTPUT"
       - name: Install GitHub CLI
         run: |
