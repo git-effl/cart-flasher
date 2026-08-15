@@ -35,6 +35,14 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh api "repos/${{ github.repository }}" --jq .full_name
+      - name: Preserve release test ROM
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: cart_flasher-release-test-${{ github.sha }}
+          path: cart_flasher.nds
+          if-no-files-found: error
+          retention-days: 14
       - name: Upload cart_flasher.nds
         if: github.event_name == 'release'
         env:
