@@ -9,6 +9,12 @@ on:
     branches: ["*"]
     paths-ignore:
       - 'README.md'
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   build:
@@ -19,7 +25,7 @@ jobs:
     name: Build with BlocksDS toolchain using official Docker image
     steps:
       - name: Checkout repo
-        uses: actions/checkout@v7
+        uses: actions/checkout@v7.0.1
       - name: Build app
         id: build
         env:
@@ -42,10 +48,11 @@ jobs:
           fi
           make NDS_OUT="$NDS_NAME" CART_FLASHER_COMMIT=$SHORT_SHA CART_FLASHER_VERSION=nightly BANNER_VERSION="$BANNER" CART_FLASHER_BUILD_KIND=Nightly
       - name: Publish build to GH Actions
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v7.0.1
         with:
           # Keep the hash in the filename so downloaded nightlies identify
           # their commit.
           path: cart_flasher-*.nds
-          name: cart_flasher-nightly
+          name: cart_flasher-nightly-${{ github.sha }}
           if-no-files-found: error
+          retention-days: 14
