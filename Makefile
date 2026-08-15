@@ -63,3 +63,12 @@ $(NDS_OUT) : arm9 arm7
 	$(V)$(BLOCKSDS)/tools/ndstool/ndstool -c $@ \
 		-7 $(ARM7DIR)/$(TARGET).elf -9 $(ARM9DIR)/$(TARGET).elf \
 		-b $(GAME_ICON) "$(GAME_FULL_TITLE)"
+	@branch=$$(git symbolic-ref --short -q HEAD || echo detached); \
+	printf '%s\n' \
+		'=== Build summary ===' \
+		'  ROM     $(NDS_OUT)' \
+		'  BANNER  $(GAME_TITLE)' \
+		'          $(GAME_SUBTITLE)' \
+		'          $(GAME_AUTHOR)' \
+		'  BUILD   kind=$(CART_FLASHER_BUILD_KIND)'; \
+	printf '  SOURCE  commit=$(CART_FLASHER_COMMIT) branch=%s\n' "$$branch"
