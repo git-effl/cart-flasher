@@ -47,12 +47,13 @@ jobs:
             BANNER="Nightly ($BRANCH): $SHORT_SHA"
           fi
           make NDS_OUT="$NDS_NAME" CART_FLASHER_COMMIT=$SHORT_SHA CART_FLASHER_VERSION=nightly BANNER_VERSION="$BANNER" CART_FLASHER_BUILD_KIND=Nightly
+          echo "short_sha=$SHORT_SHA" >> "$GITHUB_OUTPUT"
       - name: Publish build to GH Actions
         uses: actions/upload-artifact@v7.0.1
         with:
           # Keep the hash in the filename so downloaded nightlies identify
           # their commit.
           path: cart_flasher-*.nds
-          name: cart_flasher-nightly-${{ github.sha }}
+          name: cart_flasher-nightly-${{ steps.build.outputs.short_sha }}
           if-no-files-found: error
           retention-days: 14

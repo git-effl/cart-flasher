@@ -24,7 +24,9 @@ jobs:
         # keeping the /releases/latest/download/cart_flasher.nds URL permanent.
         # The version and commit shown on the boot screen are unaffected.
         run: |
-          make NDS_OUT=cart_flasher.nds BANNER_VERSION="Release: ${{ github.ref_name }}" CART_FLASHER_COMMIT=$(echo "${{ github.sha }}" | cut -c1-7) CART_FLASHER_VERSION=${{ github.ref_name }} CART_FLASHER_BUILD_KIND=Release
+          SHORT_SHA=$(printf '%.7s' "$GITHUB_SHA")
+          make NDS_OUT=cart_flasher.nds BANNER_VERSION="Release: ${{ github.ref_name }}" CART_FLASHER_COMMIT="$SHORT_SHA" CART_FLASHER_VERSION=${{ github.ref_name }} CART_FLASHER_BUILD_KIND=Release
+          echo "short_sha=$SHORT_SHA" >> "$GITHUB_OUTPUT"
       - name: Install GitHub CLI
         run: |
           apt-get update
@@ -39,7 +41,7 @@ jobs:
         if: github.event_name == 'workflow_dispatch'
         uses: actions/upload-artifact@v7.0.1
         with:
-          name: cart_flasher-release-test-${{ github.sha }}
+          name: cart_flasher-nightly-${{ steps.build.outputs.short_sha }}
           path: cart_flasher.nds
           if-no-files-found: error
           retention-days: 14
