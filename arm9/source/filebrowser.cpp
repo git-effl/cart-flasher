@@ -3,6 +3,7 @@
 #include <nds.h>
 
 #include <algorithm>
+#include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <vector>
@@ -20,6 +21,7 @@ namespace {
 struct FileEntry {
 	char name[256];
 	bool isDir;
+	uint64_t sizeBytes;
 };
 
 bool HasExtensionCI(const char* name, const char* ext) {
@@ -69,6 +71,7 @@ void ListDirectory(const char* path, const char* ext, std::vector<FileEntry>& ou
 			strncpy(fe.name, ent->d_name, sizeof(fe.name) - 1);
 			fe.name[sizeof(fe.name) - 1] = '\0';
 			fe.isDir = isDir;
+			fe.sizeBytes = isDir ? 0 : static_cast<uint64_t>(st.st_size);
 			real.push_back(fe);
 		}
 		closedir(dir);
@@ -83,63 +86,132 @@ void ListDirectory(const char* path, const char* ext, std::vector<FileEntry>& ou
 		FileEntry up;
 		strcpy(up.name, "..");
 		up.isDir = true;
+		up.sizeBytes = 0;
 		outEntries.push_back(up);
 	}
 	outEntries.insert(outEntries.end(), real.begin(), real.end());
 }
 
-void RenderList(const char* currentPath, const std::vector<FileEntry>& entries, int cursor, int scrollTop, int visibleCount) {
+void BuildBrowserEntries(const std::vector<FileEntry>& entries,
+	std::vector<fb_file_entry_t>& outEntries) {
+	outEntries.clear();
+	outEntries.reserve(entries.size());
+	for (const FileEntry& entry : entries) {
+		fb_file_entry_t browserEntry;
+		browserEntry.name = entry.name;
+		browserEntry.kind = strcmp(entry.name, "..") == 0 ? FB_FILE_ENTRY_PARENT :
+			entry.isDir ? FB_FILE_ENTRY_DIRECTORY : FB_FILE_ENTRY_FILE;
+		browserEntry.size_bytes = entry.sizeBytes;
+		outEntries.push_back(browserEntry);
+	}
+}
+
+void RenderSelectionContext(const char* currentPath, const fb_file_browser_t& browser,
+	size_t expectedSize) {
+	DrawHeader(BOTTOM_SCREEN, "Write image");
+	const fb_cell_rect_t &content = UiPageRegions().content;
+	const int detailRow = content.row + 1;
+
+	const fb_file_entry_t *selected = fb_file_browser_selected(&browser);
+	if (!selected) {
+		fb_draw_status(BOTTOM_SCREEN, detailRow, FB_STATUS_INFO, fb_theme()->info,
+			fb_theme()->bg, "No image selected");
+		return;
+	}
+
+	if (selected->kind == FB_FILE_ENTRY_PARENT) {
+		fb_draw_status(BOTTOM_SCREEN, detailRow, FB_STATUS_INFO, fb_theme()->info,
+			fb_theme()->bg, "Return to the parent folder");
+		fb_draw_path_bar(BOTTOM_SCREEN, detailRow + 2, fb_theme()->secondary,
+			fb_theme()->bg, currentPath);
+		return;
+	}
+
+	char fullPath[512];
+	PathJoin(fullPath, sizeof(fullPath), currentPath, selected->name);
+	if (selected->kind == FB_FILE_ENTRY_DIRECTORY) {
+		fb_draw_status(BOTTOM_SCREEN, detailRow, FB_STATUS_INFO, fb_theme()->info,
+			fb_theme()->bg, "Open this folder");
+		fb_draw_path_bar(BOTTOM_SCREEN, detailRow + 2, fb_theme()->secondary,
+			fb_theme()->bg, fullPath);
+		return;
+	}
+
+	char sizeLine[80];
+	snprintf(sizeLine, sizeof(sizeLine), "Image: %llu bytes",
+		static_cast<unsigned long long>(selected->size_bytes));
+	const fb_status_t compatibility =
+		selected->size_bytes < expectedSize ? FB_STATUS_ERROR :
+		selected->size_bytes == expectedSize ? FB_STATUS_SUCCESS : FB_STATUS_WARNING;
+	const uint16_t compatibilityColor =
+		selected->size_bytes < expectedSize ? fb_theme()->danger :
+		selected->size_bytes == expectedSize ? fb_theme()->good : fb_theme()->warn;
+	const char *const compatibilityMessage =
+		selected->size_bytes < expectedSize ? "Image is too small for this cart" :
+		selected->size_bytes == expectedSize ? "Image size matches this cart" :
+		"Image is larger; trailing data is ignored";
+	fb_draw_path_bar(BOTTOM_SCREEN, detailRow, fb_theme()->secondary,
+		fb_theme()->bg, fullPath);
+	fb_draw_status(BOTTOM_SCREEN, detailRow + 2, compatibility, compatibilityColor,
+		fb_theme()->bg, sizeLine);
+	fb_draw_status(BOTTOM_SCREEN, detailRow + 4, compatibility, compatibilityColor,
+		fb_theme()->bg, compatibilityMessage);
+}
+
+void RenderList(const char* currentPath, const fb_file_browser_t& browser,
+	size_t expectedSize) {
 	DrawHeader(TOP_SCREEN, "Pick a file to write");
 
-	// SCREEN_WIDTH/FONT_WIDTH (42) is one too many: DrawString starts drawing
-	// at x=FONT_WIDTH (this line's own left margin), not x=0, so only 41
-	// characters actually fit before it wraps to the next row -- a 42-char
-	// path would spill its last character onto row 2, landing on the first
-	// file-list entry. Verified directly: 6 + 41*6 = 252, +6 more > 256.
-	const int maxPathChars = (SCREEN_WIDTH / FONT_WIDTH) - 1;
+	const fb_cell_rect_t &content = UiPageRegions().content;
+	// The one-cell margin consumes one of the content region's cells.
 	char pathDisplay[64];
+	const int maxPathChars = std::min(content.cols - 1,
+		static_cast<int>(sizeof(pathDisplay) - 1));
 	int pathLen = strlen(currentPath);
 	if (pathLen > maxPathChars) {
 		snprintf(pathDisplay, sizeof(pathDisplay), "...%s", currentPath + pathLen - (maxPathChars - 3));
 	} else {
-		snprintf(pathDisplay, sizeof(pathDisplay), "%s", currentPath);
+		snprintf(pathDisplay, sizeof(pathDisplay), "%.*s", maxPathChars, currentPath);
 	}
-	DrawString(TOP_SCREEN, FONT_WIDTH, FONT_HEIGHT, COLOR_GREY, pathDisplay);
+	fb_draw_wrapped_chars(TOP_SCREEN, UiContentX(1), UiContentY(0), fb_theme()->secondary, pathDisplay);
 
-	const int maxNameChars = (SCREEN_WIDTH / FONT_WIDTH) - 2;
-	for (int i = 0; i < visibleCount; i++) {
-		int idx = scrollTop + i;
-		if (idx >= (int)entries.size()) { break; }
-		const FileEntry& e = entries[idx];
-		int y = FONT_HEIGHT * (2 + i);
-
-		char display[64];
-		int nameLen = strlen(e.name);
-		if (nameLen > maxNameChars) {
-			snprintf(display, sizeof(display), "%.*s~%s", maxNameChars - 2, e.name, e.isDir ? "/" : "");
-		} else {
-			snprintf(display, sizeof(display), "%s%s", e.name, e.isDir ? "/" : "");
-		}
-		DrawListRow(TOP_SCREEN, y, idx == cursor, COLOR_ACCENT, display);
+	for (unsigned row = 0; row < browser.list.rows; row++) {
+		const unsigned index = browser.list.first + row;
+		if (index >= browser.list.focus.count) { break; }
+		fb_draw_file_browser_row(TOP_SCREEN, UiPageRegions().content.row + 1 + row,
+			fb_theme()->text, fb_theme()->bg, fb_theme()->warn, fb_theme()->bg,
+			&browser.entries[index], index == browser.list.focus.selected,
+			FB_LIST_STYLE_CURSOR);
 	}
+	fb_list_scrollbar(TOP_SCREEN, FB_WIDTH - 1,
+		(UiPageRegions().content.row + 1) * FB_GLYPH_H, 1,
+		browser.list.rows * FB_GLYPH_H, &browser.list,
+		fb_theme()->secondary, fb_theme()->accent);
 
-	bool hasParentEntry = !entries.empty() && strcmp(entries[0].name, "..") == 0;
-	bool hasRealEntries = entries.size() > (hasParentEntry ? 1u : 0u);
+	const bool hasParentEntry = browser.list.focus.count > 0 &&
+		browser.entries[0].kind == FB_FILE_ENTRY_PARENT;
+	const bool hasRealEntries = browser.list.focus.count > (hasParentEntry ? 1u : 0u);
 	if (!hasRealEntries) {
-		int emptyMsgY = FONT_HEIGHT * (2 + (hasParentEntry ? 1 : 0));
-		DrawString(TOP_SCREEN, FONT_WIDTH, emptyMsgY, COLOR_GREY, "No .bin files in this folder yet.");
+		fb_draw_wrapped_chars(TOP_SCREEN, UiContentX(1), UiContentY(1 + (hasParentEntry ? 1 : 0)),
+			fb_theme()->secondary, "No .bin files in this folder yet.");
 	}
 
-	DrawString(TOP_SCREEN, FONT_WIDTH, SCREEN_HEIGHT - FONT_HEIGHT, COLOR_YELLOW, "<A> Select   <B> Back");
+	static const fb_action_t actions[] = {
+		{ FB_INPUT_A, "Select", nullptr, 0 },
+		{ FB_INPUT_B, "Back", nullptr, 0 },
+	};
+	fb_draw_action_bar(TOP_SCREEN, UiPageRegions().footer.row, fb_theme()->text, fb_theme()->select, actions, sizeof(actions) / sizeof(actions[0]));
+	RenderSelectionContext(currentPath, browser, expectedSize);
 }
 
 } // namespace
 
-bool BrowseForFile(const char* startPath, const char* ext, char* outPath, size_t outPathSize) {
+bool BrowseForFile(const char* startPath, const char* ext, size_t expectedSize,
+	char* outPath, size_t outPathSize) {
 	if (mount_fat() != ALL_OK) {
-		DrawString(TOP_SCREEN, FONT_WIDTH, (15 * FONT_HEIGHT), COLOR_RED,
+		fb_draw_wrapped_chars(TOP_SCREEN, UiContentX(1), UiContentY(14), fb_theme()->danger,
 			"Couldn't access the SD card.\nMake sure it's inserted.");
-		DrawString(TOP_SCREEN, FONT_WIDTH, (18 * FONT_HEIGHT), COLOR_YELLOW,
+		fb_draw_wrapped_chars(TOP_SCREEN, UiContentX(1), UiContentY(17), fb_theme()->warn,
 			"Press <B> to go back.");
 		WaitPress(KEY_B);
 		return false;
@@ -152,31 +224,35 @@ bool BrowseForFile(const char* startPath, const char* ext, char* outPath, size_t
 	std::vector<FileEntry> entries;
 	ListDirectory(currentPath, ext, entries);
 
-	int cursor = 0;
-	int scrollTop = 0;
-	const int visibleCount = (SCREEN_HEIGHT - FONT_HEIGHT * 3) / FONT_HEIGHT;
+	std::vector<fb_file_entry_t> browserEntries;
+	BuildBrowserEntries(entries, browserEntries);
+	const int visibleCount = UiContentRows() - 1;
+	fb_file_browser_t browser;
+	fb_file_browser_init(&browser, browserEntries.data(), browserEntries.size(),
+		visibleCount, 0);
+	fb_input_repeat_t browserRepeat = {};
 	bool dirty = true;
 	bool result = false;
 
 	while (true) {
 		swiWaitForVBlank();
 		if (dirty) {
-			RenderList(currentPath, entries, cursor, scrollTop, visibleCount);
+			RenderList(currentPath, browser, expectedSize);
 			dirty = false;
 		}
 
 		scanKeys();
 		u32 keys = keysDown();
+		const u32 heldKeys = keysHeld();
+		const fb_input_t heldDirection = heldKeys & KEY_DOWN ? FB_INPUT_DOWN :
+			heldKeys & KEY_UP ? FB_INPUT_UP : 0;
 
-		if (keys & KEY_DOWN && cursor < (int)entries.size() - 1) {
-			cursor++;
-			if (cursor >= scrollTop + visibleCount) { scrollTop = cursor - visibleCount + 1; }
-			dirty = true;
-		}
-		if (keys & KEY_UP && cursor > 0) {
-			cursor--;
-			if (cursor < scrollTop) { scrollTop = cursor; }
-			dirty = true;
+		if (fb_input_repeat_update(&browserRepeat, heldDirection, 12, 3)) {
+			if (heldDirection == FB_INPUT_DOWN) {
+				dirty |= fb_file_browser_move(&browser, 1);
+			} else if (heldDirection == FB_INPUT_UP) {
+				dirty |= fb_file_browser_move(&browser, -1);
+			}
 		}
 		if (keys & KEY_B) {
 			if (strcmp(currentPath, "/") == 0) {
@@ -185,34 +261,49 @@ bool BrowseForFile(const char* startPath, const char* ext, char* outPath, size_t
 			}
 			PathUp(currentPath);
 			ListDirectory(currentPath, ext, entries);
-			cursor = 0;
-			scrollTop = 0;
+			BuildBrowserEntries(entries, browserEntries);
+			fb_file_browser_init(&browser, browserEntries.data(), browserEntries.size(),
+				visibleCount, 0);
 			dirty = true;
 		}
-		if (keys & KEY_A && !entries.empty()) {
-			const FileEntry sel = entries[cursor];
-			if (strcmp(sel.name, "..") == 0) {
+		if (keys & KEY_A && browser.list.focus.count != 0) {
+			const fb_file_entry_t *selected = fb_file_browser_selected(&browser);
+			switch (fb_file_browser_activate(&browser)) {
+			case FB_FILE_BROWSER_GO_PARENT: {
 				PathUp(currentPath);
 				ListDirectory(currentPath, ext, entries);
-				cursor = 0;
-				scrollTop = 0;
+				BuildBrowserEntries(entries, browserEntries);
+				fb_file_browser_init(&browser, browserEntries.data(), browserEntries.size(),
+					visibleCount, 0);
 				dirty = true;
-			} else if (sel.isDir) {
+				break;
+			}
+
+			case FB_FILE_BROWSER_ENTER_DIRECTORY: {
 				char newPath[512];
-				PathJoin(newPath, sizeof(newPath), currentPath, sel.name);
+				PathJoin(newPath, sizeof(newPath), currentPath, selected->name);
 				strncpy(currentPath, newPath, sizeof(currentPath) - 1);
 				currentPath[sizeof(currentPath) - 1] = '\0';
 				ListDirectory(currentPath, ext, entries);
-				cursor = 0;
-				scrollTop = 0;
+				BuildBrowserEntries(entries, browserEntries);
+				fb_file_browser_init(&browser, browserEntries.data(), browserEntries.size(),
+					visibleCount, 0);
 				dirty = true;
-			} else {
+				break;
+			}
+
+			case FB_FILE_BROWSER_OPEN_FILE: {
 				char fullPath[512];
-				PathJoin(fullPath, sizeof(fullPath), currentPath, sel.name);
+				PathJoin(fullPath, sizeof(fullPath), currentPath, selected->name);
 				snprintf(outPath, outPathSize, "%s", fullPath);
 				result = true;
 				break;
 			}
+
+			case FB_FILE_BROWSER_NONE:
+				break;
+			}
+			if (result) { break; }
 		}
 	}
 

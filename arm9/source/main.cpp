@@ -39,12 +39,12 @@ int main(void)
 	// access then reads open-bus 0xFFFFFFFF and detection fails. Pin it to ARM9.
 	dldiSetMode(DLDI_MODE_ARM9);
 	if (!fatInitDefault()) {
-		DrawString(BOTTOM_SCREEN, FONT_WIDTH, FONT_HEIGHT * 2, COLOR_RED,
+		fb_draw_wrapped_chars(BOTTOM_SCREEN, UiContentX(1), UiContentY(1), fb_theme()->danger,
 			"SD card init failed!\nLogging, backups and writes\nwon't work this session.");
 		// Nothing can be logged without a card, so put the probe on screen
 		// instead -- it survives until the cart list draws over it.
-		DrawString(BOTTOM_SCREEN, FONT_WIDTH, FONT_HEIGHT * 6, COLOR_GREY, "Hardware probe");
-		LogHardwareProbe(8);
+		fb_draw_wrapped_chars(BOTTOM_SCREEN, UiContentX(1), UiContentY(5), fb_theme()->secondary, "Hardware probe");
+		LogHardwareProbe(7);
 	}
 
 	Flashcart *cart = nullptr; //We define our main cart variable right here, and we will pass it along from function to function until the very end

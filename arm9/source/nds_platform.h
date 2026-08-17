@@ -8,7 +8,8 @@ return_codes_t mount_fat(void);
 return_codes_t unmount_fat(void);
 return_codes_t DumpFlash(flashcart_core::Flashcart* cart);
 return_codes_t WriteFlash(flashcart_core::Flashcart* cart, const char* filepath);
-// Logs the probe and draws it on the bottom screen from `firstRow` down, taking
-// seven rows. The caller owns the screen around it: at boot it sits under the
-// SD-failure notice, from the menu it gets the screen to itself.
-void LogHardwareProbe(int firstRow);
+// Logs the probe and draws it in the bottom screen's content region from
+// `firstContentRow` down, taking ten rows. The caller owns the screen
+// around it: at boot it sits under the SD-failure notice, from the menu it
+// gets the screen to itself.
+void LogHardwareProbe(int firstContentRow);

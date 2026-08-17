@@ -1,59 +1,33 @@
 #pragma once
 
+#include <cstddef>
+
 #include <nds.h>
-#define vBufferM ((u16 *)0x06000000)
-#define vBufferS ((u16 *)0x06200000)
 
-#define TOP_SCREEN vBufferM
-#define BOTTOM_SCREEN vBufferS
+extern "C" {
+#include <fb.h>
+#include <fb_text.h>
+#include <fb_theme.h>
+#include <fb_tui.h>
+}
 
-#define BG_15BITCOLOR    (1<<7)
-#define BG_CBB1          (1<<2)
+extern u16 *top_screen;
+extern u16 *bottom_screen;
 
-// Screen size comes from libnds (SCREEN_WIDTH/SCREEN_HEIGHT) -- don't shadow
-// it with our own SCREENWIDTH/SCREENHEIGHT, which reads as a typo of it.
+#define TOP_SCREEN top_screen
+#define BOTTOM_SCREEN bottom_screen
 
-// Font is 6x10 (font.h). Declared here, not there, so callers don't need to
-// include font.h's `static` glyph array just for two numbers.
-#define FONT_WIDTH  6
-#define FONT_HEIGHT 10
-
-#define RGB(x, y, z) RGB8(x, y, z)
-
-#define COLOR_BLACK         RGB(0x00, 0x00, 0x00)
-#define COLOR_WHITE         RGB(0xFF, 0xFF, 0xFF)
-#define COLOR_RED           RGB(0xFF, 0x00, 0x00)
-#define COLOR_GREEN         RGB(0x00, 0xFF, 0x00)
-#define COLOR_BLUE          RGB(0x00, 0x00, 0xFF)
-#define COLOR_CYAN          RGB(0x00, 0xFF, 0xFF)
-#define COLOR_MAGENTA       RGB(0xFF, 0x00, 0xFF)
-#define COLOR_YELLOW        RGB(0xFF, 0xFF, 0x00)
-#define COLOR_GREY          RGB(0x77, 0x77, 0x77)
-#define COLOR_TRANSPARENT   RGB(0xFF, 0x00, 0xEF) // otherwise known as 'super fuchsia'
-
-#define COLOR_GREYBLUE      RGB(0xA0, 0xA0, 0xFF)
-#define COLOR_GREYGREEN     RGB(0xA0, 0xFF, 0xA0)
-#define COLOR_GREYRED       RGB(0xFF, 0xA0, 0xA0)
-#define COLOR_GREYCYAN      RGB(0xA0, 0xFF, 0xFF)
-#define COLOR_TINTEDRED     RGB(0xFF, 0x60, 0x60)
-#define COLOR_LIGHTGREY     RGB(0xA0, 0xA0, 0xA0)
-
-#define COLOR_ASK           COLOR_GREYGREEN
-#define COLOR_SELECT        COLOR_LIGHTGREY
-#define COLOR_ACCENT        COLOR_GREEN
-
-#define STD_COLOR_BG   COLOR_BLACK
-#define STD_COLOR_FONT COLOR_WHITE
+const fb_page_regions_t &UiPageRegions(void);
+int UiContentX(int column);
+int UiContentY(int row);
+int UiContentRows(void);
+int UiFooterY(void);
 
 void InitializeScreens(void);
-void ClearScreen(u16 *screen, u16 color);
-void DrawRectangle(u16 *screen, int x, int y, int width, int height, u16 color);
-
-void DrawCharacter(u16 *screen, int character, int x, int y, u16 color);
-void DrawString(u16 *screen, int x, int y, u16 color, const char *str);
+void StartTopSpinnerAnimation(int x, int y, u16 color, u16 background);
+void StopTopSpinnerAnimation(void);
 void DrawStringF(u16 *screen, int x, int y, u16 color, const char *format, ...);
-void DrawStringCentered(u16 *screen, int y, u16 color, const char *str);
-void DrawListRow(u16 *screen, int y, bool selected, u16 highlightColor, const char *text);
+void DrawWrappedF(u16 *screen, int x, int y, int width, u16 color, const char *format, ...);
 
 void SetProgressOverride(uint32_t current, uint32_t total);
 void ShowProgress(u16 *screen, uint32_t current, uint32_t total, const char* status);

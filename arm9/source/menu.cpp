@@ -29,6 +29,35 @@ using namespace ncgc;
 
 int global_loglevel = 1; //https://github.com/ntrteam/flashcart_core/blob/master/platform.h#L6
 
+// Cart selection changes can happen every VBlank. Render the description into
+// RAM and let nds-fb copy only changed pixels, so the visible bottom screen is
+// never briefly cleared between two cart descriptions.
+static u16 cartInfoStaging[FB_PIXELS];
+static u16 cartInfoPresented[FB_PIXELS];
+static bool cartInfoPanelValid = false;
+
+static void InvalidateCartInfoPanel(void)
+{
+	cartInfoPanelValid = false;
+}
+
+static void RenderCartInfoPanel(Flashcart* cart)
+{
+	const fb_theme_t *theme = fb_theme();
+	if (!cartInfoPanelValid) {
+		memset(cartInfoPresented, 0, sizeof(cartInfoPresented));
+		cartInfoPanelValid = true;
+	}
+
+	fb_clear(cartInfoStaging, theme->bg);
+	fb_draw_banner(cartInfoStaging, UiPageRegions().header.row,
+		theme->text, theme->accent, "Flashcart info", "");
+	DrawWrappedF(cartInfoStaging, UiContentX(1), UiContentY(1),
+		(UiPageRegions().content.cols - 2) * FB_GLYPH_W, theme->text,
+		"%s\n\n%s", cart->getAuthor(), cart->getDescription());
+	(void)fb_apply_diff(BOTTOM_SCREEN, cartInfoPresented, cartInfoStaging);
+}
+
 // <START> power-off shortcut, checked once per frame from the boot splash
 // and the cart list -- deliberately not everywhere in the app (see the
 // switch-flash confirm/combo screens, which don't offer it). GodMode9i's own
@@ -50,14 +79,20 @@ void HandlePowerOffShortcut(void)
 
 void print_boot_msg(void)
 {
-	// Plain black + the same blue header bar every other screen uses, not a
-	// full alarm-red screen — this is a heads-up, not a hazard warning.
-	char header_title[64];
-	sprintf(header_title, "Cart-Flasher %s", CART_FLASHER_VERSION);
-	DrawHeader(TOP_SCREEN, header_title);
-	DrawString(TOP_SCREEN, FONT_WIDTH, FONT_HEIGHT * 2, COLOR_WHITE, bootmsg);
-	DrawString(TOP_SCREEN, FONT_WIDTH, FONT_HEIGHT * 13, COLOR_YELLOW, "<A> Continue   <START> Power off");
-	DrawStringF(TOP_SCREEN, FONT_WIDTH, FONT_HEIGHT * 16, COLOR_GREY, "Developed by @tasken\n%s build - Commit: %s\nBased on work by jason0597 & DS-Homebrew", CART_FLASHER_BUILD_KIND, CART_FLASHER_COMMIT);
+	// This is the only pre-action safety notice. Use the native warning block
+	// so its visual treatment matches the severity of writing flashroms.
+	DrawHeader(TOP_SCREEN, "Cart-Flasher");
+	fb_draw_status_wrapped_page(TOP_SCREEN, UiPageRegions().content.row + 1, 12,
+		FB_STATUS_WARNING, fb_theme()->warn, fb_theme()->bg, bootmsg);
+	// Three credit lines finish one blank row above the persistent footer.
+	DrawStringF(TOP_SCREEN, UiContentX(1), UiContentY(18), fb_theme()->secondary,
+		"Developed by @tasken\n%s build - Commit: %s\nBased on work by jason0597 & DS-Homebrew",
+		CART_FLASHER_BUILD_KIND, CART_FLASHER_COMMIT);
+	static const fb_action_t actions[] = {
+		{ FB_INPUT_A, "Continue", nullptr, 0 },
+		{ FB_INPUT_START, "Power off", nullptr, 0 },
+	};
+	fb_draw_action_bar(TOP_SCREEN, UiPageRegions().footer.row, fb_theme()->text, fb_theme()->select, actions, sizeof(actions) / sizeof(actions[0]));
 
 	while (true)
 	{
@@ -84,6 +119,93 @@ static bool WaitConfirm(void) {
 		if (keysDown() & KEY_A) { return true; }
 		if (keysDown() & KEY_B) { return false; }
 	}
+}
+
+// Platform mapping is intentionally separate from nds-fb, whose button group
+// remains portable and receives only logical edge-triggered input.
+static fb_input_t MapButtons(u32 keys)
+{
+	fb_input_t input = 0;
+	if (keys & KEY_A) { input |= FB_INPUT_A; }
+	if (keys & KEY_B) { input |= FB_INPUT_B; }
+	if (keys & KEY_UP) { input |= FB_INPUT_UP; }
+	if (keys & KEY_DOWN) { input |= FB_INPUT_DOWN; }
+	if (keys & KEY_LEFT) { input |= FB_INPUT_LEFT; }
+	if (keys & KEY_RIGHT) { input |= FB_INPUT_RIGHT; }
+	return input;
+}
+
+static int WaitButtonGroup(fb_button_group_t *group,
+	const fb_button_group_layout_t *layout, const fb_button_colors_t *colors)
+{
+	const fb_button_group_input_t input =
+		fb_modal_button_group_input_default(FB_BUTTON_GROUP_HORIZONTAL);
+	while (true) {
+		swiWaitForVBlank();
+		scanKeys();
+		int activated = -1;
+		const fb_button_group_event_t event = fb_button_group_input(group, 0,
+			MapButtons(keysDown()), &input, &activated);
+		if (event == FB_BUTTON_GROUP_EVENT_MOVED) {
+			fb_draw_button_group(TOP_SCREEN, group, layout, colors);
+		} else if (event == FB_BUTTON_GROUP_EVENT_CANCELLED) {
+			return -1;
+		} else if (event == FB_BUTTON_GROUP_EVENT_ACTIVATED) {
+			return activated;
+		}
+	}
+}
+
+static int RenderWriteConfirmationModal(void)
+{
+	const fb_cell_rect_t &content = UiPageRegions().content;
+	const int modalCols = 43;
+	const int modalRows = 18;
+	const int modalCol = content.col + (content.cols - modalCols) / 2;
+	const int modalRow = content.row + (content.rows - modalRows) / 2;
+	fb_modal_semantic(TOP_SCREEN, modalCol, modalRow, modalCols, modalRows,
+		fb_theme()->warn, fb_theme()->bg, fb_theme()->danger, FB_MODAL_TONE_DANGER);
+	fb_draw_aligned(TOP_SCREEN, (modalCol + 2) * FB_GLYPH_W,
+		(modalRow + 1) * FB_GLYPH_H, (modalCols - 4) * FB_GLYPH_W,
+		FB_TEXT_ALIGN_CENTER, fb_theme()->text, "Write flash");
+	fb_draw_wrapped_page(TOP_SCREEN, (modalCol + 2) * FB_GLYPH_W,
+		(modalRow + 3) * FB_GLYPH_H, (modalCols - 4) * FB_GLYPH_W,
+		6, fb_theme()->text,
+		"This overwrites the cart's flashrom and can't be undone.\n\n"
+		"A changed icon or banner is blocked by stock DSi/3DS firmware "
+		"unless CFW is installed. NDS/DS Lite are fine.");
+	fb_draw_aligned(TOP_SCREEN, (modalCol + 1) * FB_GLYPH_W,
+		(modalRow + 10) * FB_GLYPH_H, (modalCols - 2) * FB_GLYPH_W,
+		FB_TEXT_ALIGN_CENTER, fb_theme()->warn, "Enter the key combo to confirm:");
+	static const fb_action_t actions[] = {
+		{ FB_INPUT_B, "Cancel", nullptr, 0 },
+	};
+	fb_draw_action_bar(TOP_SCREEN, UiPageRegions().footer.row, fb_theme()->text,
+		fb_theme()->select, actions, sizeof(actions) / sizeof(actions[0]));
+	return (modalRow + 12) * FB_GLYPH_H;
+}
+
+static void RenderWriteFailureModal(void)
+{
+	const fb_cell_rect_t &content = UiPageRegions().content;
+	const int modalCols = 43;
+	const int modalRows = 18;
+	const int modalCol = content.col + (content.cols - modalCols) / 2;
+	const int modalRow = content.row + (content.rows - modalRows) / 2;
+	fb_modal_semantic(TOP_SCREEN, modalCol, modalRow, modalCols, modalRows,
+		fb_theme()->warn, fb_theme()->bg, fb_theme()->danger, FB_MODAL_TONE_DANGER);
+	fb_draw_aligned(TOP_SCREEN, (modalCol + 2) * FB_GLYPH_W,
+		(modalRow + 1) * FB_GLYPH_H, (modalCols - 4) * FB_GLYPH_W,
+		FB_TEXT_ALIGN_CENTER, fb_theme()->text, "Write flash");
+	fb_draw_aligned(TOP_SCREEN, (modalCol + 1) * FB_GLYPH_W,
+		(modalRow + 6) * FB_GLYPH_H, (modalCols - 2) * FB_GLYPH_W,
+		FB_TEXT_ALIGN_CENTER, fb_theme()->danger, "Wrong key combo, nothing was touched.");
+	static const fb_action_t actions[] = {
+		{ FB_INPUT_A, "Retry", nullptr, 0 },
+		{ FB_INPUT_B, "Cancel", nullptr, 0 },
+	};
+	fb_draw_action_bar(TOP_SCREEN, UiPageRegions().footer.row, fb_theme()->text,
+		fb_theme()->select, actions, sizeof(actions) / sizeof(actions[0]));
 }
 
 bool ntrCardReset()
@@ -129,19 +251,21 @@ void menu_lvl1(Flashcart* cart)
 	});
 
 	u32 menu_sel = 0;
+	fb_input_repeat_t cartRepeat = {};
 	
 	NTRCard card(ntrCardReset);
 	DrawHeader(TOP_SCREEN, "Choose your flashcart");
 	DrawFooter(global_loglevel);
-	DrawHeader(BOTTOM_SCREEN, "Flashcart info");
-	DrawStringF(BOTTOM_SCREEN, FONT_WIDTH, FONT_HEIGHT * 2, COLOR_WHITE, "%s\n\n%s", flashcart_list->at(0)->getAuthor(), flashcart_list->at(0)->getDescription());
+	RenderCartInfoPanel(flashcart_list->at(0));
 	u32 flashcart_list_size = flashcart_list->size();
 
 	// Redraws only on change, not every frame -- full-width highlight bars
 	// redrawn every frame with no vsync tear visibly on hardware.
 	for (u32 i = 0; i < flashcart_list_size; i++)
 	{
-		DrawListRow(TOP_SCREEN, (i + 2) * FONT_HEIGHT, i == menu_sel, COLOR_ACCENT, flashcart_list->at(i)->getName());
+		fb_draw_list_row_style(TOP_SCREEN, UiPageRegions().content.row + i + 1,
+			fb_theme()->text, fb_theme()->bg, fb_theme()->warn, fb_theme()->bg,
+			flashcart_list->at(i)->getName(), i == menu_sel, FB_LIST_STYLE_CURSOR);
 	}
 
 	while (true) //This will be our MAIN loop
@@ -151,15 +275,18 @@ void menu_lvl1(Flashcart* cart)
 
 		scanKeys();
 		HandlePowerOffShortcut();
-		if (keysDown() & KEY_DOWN && menu_sel < (flashcart_list_size - 1))
-		{
-			menu_sel++;
-			reprintFlag = true;
-		}
-		if (keysDown() & KEY_UP   && menu_sel > 0)
-		{
-			menu_sel--;
-			reprintFlag = true;
+		const u32 heldKeys = keysHeld();
+		const fb_input_t heldDirection = heldKeys & KEY_DOWN ? FB_INPUT_DOWN :
+			heldKeys & KEY_UP ? FB_INPUT_UP : 0;
+		if (fb_input_repeat_update(&cartRepeat, heldDirection, 12, 3)) {
+			if (heldDirection == FB_INPUT_DOWN && menu_sel < (flashcart_list_size - 1)) {
+				menu_sel++;
+				reprintFlag = true;
+			}
+			if (heldDirection == FB_INPUT_UP && menu_sel > 0) {
+				menu_sel--;
+				reprintFlag = true;
+			}
 		}
 		if (keysDown() & KEY_Y) {
 			if (global_loglevel == 4) {
@@ -173,13 +300,14 @@ void menu_lvl1(Flashcart* cart)
 			// cart-bus ownership) to the log and screen -- the screen copy is
 			// all that exists if the SD card itself is what failed.
 			if (global_loglevel == 0) {
-				// Prompt goes on the top footer row like every other screen.
-				// Blanking first is required -- the footer it replaces is
-				// longer, so drawing over it would leave a stale tail.
-				DrawRectangle(TOP_SCREEN, 0, SCREEN_HEIGHT - FONT_HEIGHT, SCREEN_WIDTH, FONT_HEIGHT, COLOR_BLACK);
-				DrawString(TOP_SCREEN, FONT_WIDTH, SCREEN_HEIGHT - FONT_HEIGHT, COLOR_YELLOW, "<B> Back to the cart list");
+				static const fb_action_t probeActions[] = {
+					{ FB_INPUT_B, "Back to the cart list", nullptr, 0 },
+				};
+				fb_draw_action_bar(TOP_SCREEN, UiPageRegions().footer.row, fb_theme()->text, fb_theme()->select, probeActions,
+					sizeof(probeActions) / sizeof(probeActions[0]));
+				InvalidateCartInfoPanel();
 				DrawHeader(BOTTOM_SCREEN, "Hardware probe");
-				LogHardwareProbe(2);
+				LogHardwareProbe(1);
 				WaitPress(KEY_B);
 				DrawFooter(global_loglevel);
 				reprintFlag = true; // redraws the flashcart info the probe covered
@@ -193,21 +321,30 @@ void menu_lvl1(Flashcart* cart)
 			// list in DSi mode, since R4iSDHC.hk is hidden outside it. Also
 			// reused by the detection-error message below, which overwrites
 			// this same row once it's known whether detection succeeded.
-			const int errorRow = flashcart_list_size + 3;
+			const int errorContentRow = flashcart_list_size + 2;
 
-			// card.init()/cart->initialize() below do real SPI/cart-bus probing,
-			// which can take a noticeable moment -- without this, the screen just
-			// sits on the list with no sign the button press registered, which
-			// reads as a freeze rather than a wait. White, in the content area:
-			// matches every other in-progress status line in this app (e.g.
-			// DumpFlash/WriteFlash's "Backing up.../Writing to..."). Yellow is
-			// reserved for button prompts everywhere else, never plain status.
-			// Footer hidden while this runs: it's a blocking call with no
-			// scanKeys() polling underneath it, so "<A> Select   <Y> Log: %s"
-			// would sit there doing nothing -- restored by the DrawFooter()
-			// call on both paths once detection resolves.
-			DrawRectangle(TOP_SCREEN, 0, SCREEN_HEIGHT - FONT_HEIGHT, SCREEN_WIDTH, FONT_HEIGHT, COLOR_BLACK);
-			DrawStringF(TOP_SCREEN, FONT_WIDTH, errorRow * FONT_HEIGHT, COLOR_WHITE, "Detecting %s...", cart->getName());
+			// Identification is blocking hardware I/O, so put the selected cart
+			// in a native modal rather than leaving an inert list underneath.
+			const fb_cell_rect_t &content = UiPageRegions().content;
+			const int modalCols = 34;
+			const int modalRows = 7;
+			const int modalCol = content.col + (content.cols - modalCols) / 2;
+			const int modalRow = content.row + (content.rows - modalRows) / 2;
+			fb_modal_semantic(TOP_SCREEN, modalCol, modalRow, modalCols, modalRows,
+				fb_theme()->info, fb_theme()->bg, fb_theme()->danger, FB_MODAL_TONE_NORMAL);
+			fb_draw_aligned(TOP_SCREEN, (modalCol + 1) * FB_GLYPH_W,
+				(modalRow + 1) * FB_GLYPH_H, (modalCols - 2) * FB_GLYPH_W,
+				FB_TEXT_ALIGN_CENTER, fb_theme()->text, "Identifying");
+			StartTopSpinnerAnimation(
+				modalCol * FB_GLYPH_W + (modalCols * FB_GLYPH_W - FB_GLYPH_W) / 2,
+				(modalRow + 3) * FB_GLYPH_H, fb_theme()->info, fb_theme()->bg);
+			fb_draw_aligned(TOP_SCREEN, (modalCol + 1) * FB_GLYPH_W,
+				(modalRow + 5) * FB_GLYPH_H, (modalCols - 2) * FB_GLYPH_W,
+				FB_TEXT_ALIGN_CENTER, fb_theme()->secondary, cart->getName());
+			// A fast cart can finish probing before the display reaches its
+			// next frame. Present one VBlank so this blocking-status modal is
+			// visible even on immediately detectable carts.
+			swiWaitForVBlank();
 
 			if (isDSiMode() || strcmp(cart->getShortName(), "DSTT") == 0) {
 				// __ncgc_must_check. Not fatal here -- initialize() below fails
@@ -224,26 +361,34 @@ void menu_lvl1(Flashcart* cart)
 				// to inherit there.
 				card.state(NTRState::Key2);
 			}
-			if (!cart->initialize(&card)) //If cart initialization fails, do all this and then break to main menu
+			const bool cartInitialized = cart->initialize(&card);
+			StopTopSpinnerAnimation();
+			if (!cartInitialized) //If cart initialization fails, do all this and then break to main menu
 			{
-				// Overwrites the "Detecting..." line above -- blanked first since
-				// the error's own first line isn't guaranteed longer than every
-				// possible "Detecting <cart name>..." line.
-				DrawRectangle(TOP_SCREEN, 0, errorRow * FONT_HEIGHT, SCREEN_WIDTH, FONT_HEIGHT, COLOR_BLACK);
+				// The modal obscures several list rows, so reconstruct the list
+				// before placing its related error beneath it.
+				DrawHeader(TOP_SCREEN, "Choose your flashcart");
+				DrawFooter(global_loglevel);
+				for (u32 i = 0; i < flashcart_list_size; i++) {
+					fb_draw_list_row_style(TOP_SCREEN, UiPageRegions().content.row + i + 1,
+						fb_theme()->text, fb_theme()->bg, fb_theme()->warn, fb_theme()->bg,
+						flashcart_list->at(i)->getName(), i == menu_sel, FB_LIST_STYLE_CURSOR);
+				}
 				// Message and "press <B>" instruction split, matching every
 				// error case in menu_lvl2's switch below.
-				DrawString(TOP_SCREEN, FONT_WIDTH, errorRow * FONT_HEIGHT, COLOR_RED,
+				fb_draw_wrapped_chars(TOP_SCREEN, UiContentX(1), UiContentY(errorContentRow), fb_theme()->danger,
 					"Couldn't detect this flashcart.\nCheck it's inserted firmly.");
-				DrawString(TOP_SCREEN, FONT_WIDTH, (errorRow + 3) * FONT_HEIGHT, COLOR_YELLOW,
+				fb_draw_wrapped_chars(TOP_SCREEN, UiContentX(1), UiContentY(errorContentRow + 3), fb_theme()->warn,
 					"Press <B> to go back.");
 				WaitPress(KEY_B);
-				ClearScreen(TOP_SCREEN, COLOR_BLACK);
+				fb_clear(TOP_SCREEN, fb_theme()->bg);
 				DrawHeader(TOP_SCREEN, "Choose your flashcart");
 				DrawFooter(global_loglevel);
 				reprintFlag = true;
 			}
 			else
 			{
+				InvalidateCartInfoPanel();
 				menu_lvl2(cart); //There is a while loop over at menu_lvl2(), the statements underneath won't get executed immediately
 				DrawHeader(TOP_SCREEN, "Choose your flashcart");
 				DrawFooter(global_loglevel);
@@ -255,11 +400,12 @@ void menu_lvl1(Flashcart* cart)
 		{
 			for (u32 i = 0; i < flashcart_list_size; i++)
 			{
-				DrawListRow(TOP_SCREEN, (i + 2) * FONT_HEIGHT, i == menu_sel, COLOR_ACCENT, flashcart_list->at(i)->getName());
+				fb_draw_list_row_style(TOP_SCREEN, UiPageRegions().content.row + i + 1,
+					fb_theme()->text, fb_theme()->bg, fb_theme()->warn, fb_theme()->bg,
+					flashcart_list->at(i)->getName(), i == menu_sel, FB_LIST_STYLE_CURSOR);
 			}
 			cart = flashcart_list->at(menu_sel);
-			DrawHeader(BOTTOM_SCREEN, "Flashcart info");
-			DrawStringF(BOTTOM_SCREEN, FONT_WIDTH, FONT_HEIGHT * 2, COLOR_WHITE, "%s\n\n%s", cart->getAuthor(), cart->getDescription());
+			RenderCartInfoPanel(cart);
 		}
 	}
 }
@@ -267,9 +413,14 @@ void menu_lvl1(Flashcart* cart)
 void menu_lvl2(Flashcart* cart)
 {
 	DrawHeader(TOP_SCREEN, cart->getName());
-	DrawString(TOP_SCREEN, FONT_WIDTH, SCREEN_HEIGHT - FONT_HEIGHT, COLOR_YELLOW, "<A> Select   <B> Back");
+	static const fb_action_t selectActions[] = {
+		{ FB_INPUT_A, "Select", nullptr, 0 },
+		{ FB_INPUT_B, "Back", nullptr, 0 },
+	};
+	fb_draw_action_bar(TOP_SCREEN, UiPageRegions().footer.row, fb_theme()->text, fb_theme()->select, selectActions, sizeof(selectActions) / sizeof(selectActions[0]));
 	int menu_sel = 0;
 	bool dirty = true;
+	fb_input_repeat_t actionRepeat = {};
 
 	while (true)
 	{
@@ -278,22 +429,35 @@ void menu_lvl2(Flashcart* cart)
 		// underneath them) actually changed, not every single frame — redrawing
 		// full-width rectangles unconditionally with no vsync tears visibly.
 		if (dirty) {
-			DrawListRow(TOP_SCREEN, 2 * FONT_HEIGHT, menu_sel == 0, COLOR_ACCENT, "Back up flash");	//0
-			DrawListRow(TOP_SCREEN, 3 * FONT_HEIGHT, menu_sel == 1, COLOR_TINTEDRED, "Write flash");	//1
+			fb_draw_list_row_style(TOP_SCREEN, UiPageRegions().content.row + 1,
+				fb_theme()->text, fb_theme()->bg, fb_theme()->warn, fb_theme()->bg,
+				"Back up flash", menu_sel == 0, FB_LIST_STYLE_CURSOR);	//0
+			fb_draw_list_row_style(TOP_SCREEN, UiPageRegions().content.row + 2,
+				fb_theme()->danger, fb_theme()->bg, fb_theme()->danger, fb_theme()->bg,
+				"Write flash", menu_sel == 1, FB_LIST_STYLE_CURSOR);	//1
+			DrawHeader(BOTTOM_SCREEN, menu_sel == 0 ? "Back up flash" : "Write flash");
+			fb_draw_status_wrapped_page(BOTTOM_SCREEN, UiPageRegions().content.row + 1,
+				8, menu_sel == 0 ? FB_STATUS_INFO : FB_STATUS_WARNING,
+				menu_sel == 0 ? fb_theme()->info : fb_theme()->warn, fb_theme()->bg,
+				menu_sel == 0
+					? "Reads this cart and saves a backup in /cart-backups. Nothing is written to the cart."
+					: "Overwrites this cart from a .bin image. The image must exactly match the cart size, and writing cannot be undone.");
 			dirty = false;
 		}
 
 		scanKeys();
-
-		if (keysDown() & KEY_DOWN && menu_sel < 1)
-		{
-			menu_sel++;
-			dirty = true;
-		}
-		if (keysDown() & KEY_UP   && menu_sel > 0)
-		{
-			menu_sel--;
-			dirty = true;
+		const u32 heldKeys = keysHeld();
+		const fb_input_t heldDirection = heldKeys & KEY_DOWN ? FB_INPUT_DOWN :
+			heldKeys & KEY_UP ? FB_INPUT_UP : 0;
+		if (fb_input_repeat_update(&actionRepeat, heldDirection, 12, 3)) {
+			if (heldDirection == FB_INPUT_DOWN && menu_sel < 1) {
+				menu_sel++;
+				dirty = true;
+			}
+			if (heldDirection == FB_INPUT_UP && menu_sel > 0) {
+				menu_sel--;
+				dirty = true;
+			}
 		}
 		if (keysDown() & KEY_B)
 		{
@@ -305,9 +469,11 @@ void menu_lvl2(Flashcart* cart)
 		{
 			char writePath[512];
 			if (menu_sel == 1) {
-				if (!BrowseForFile("/cart-backups", ".bin", writePath, sizeof(writePath))) {
+				if (!BrowseForFile("/cart-backups", ".bin", cart->getMaxLength(),
+					writePath, sizeof(writePath))) {
 					DrawHeader(TOP_SCREEN, cart->getName());
-					DrawString(TOP_SCREEN, FONT_WIDTH, SCREEN_HEIGHT - FONT_HEIGHT, COLOR_YELLOW, "<A> Select   <B> Back");
+					fb_draw_action_bar(TOP_SCREEN, UiPageRegions().footer.row, fb_theme()->text, fb_theme()->select, selectActions,
+						sizeof(selectActions) / sizeof(selectActions[0]));
 					dirty = true;
 					continue;
 				}
@@ -327,25 +493,72 @@ void menu_lvl2(Flashcart* cart)
 			bool confirmed;
 			if (menu_sel == 0)
 			{
-				DrawString(TOP_SCREEN, 34, (5 * FONT_HEIGHT), COLOR_WHITE,
-					"Dumping this cart's flashrom to\n/cart-backups on your SD card.\n\nNothing is written to the cart.\n\nIf it fails, or the dump is\nnonsense, STOP and open a GitHub\nissue.");
-				DrawStringCentered(TOP_SCREEN, (14 * FONT_HEIGHT), COLOR_YELLOW, "<A> Start backup   <B> Cancel");
-				confirmed = WaitConfirm();
+				const fb_cell_rect_t &content = UiPageRegions().content;
+				const int modalCols = 43;
+				const int modalRows = 16;
+				const int modalCol = content.col + (content.cols - modalCols) / 2;
+				const int modalRow = content.row + (content.rows - modalRows) / 2;
+				static const fb_button_t buttons[] = {
+					{ "Cancel", FB_BUTTON_CANCEL, true, 0, 0, 0 },
+					{ "Start backup", FB_BUTTON_CONFIRM, true, 1, 0, 0 },
+				};
+				fb_button_group_t buttonGroup;
+				const fb_button_group_options_t buttonOptions =
+					fb_button_group_options_default();
+				fb_button_group_init(&buttonGroup, buttons,
+					sizeof(buttons) / sizeof(buttons[0]), 1, &buttonOptions);
+				fb_pixel_rect_t buttonRects[sizeof(buttons) / sizeof(buttons[0])];
+				const fb_cell_rect_t buttonBounds = {
+					modalCol + 2, modalRow + 11, modalCols - 4, 3,
+				};
+				fb_button_group_layout_t buttonLayout;
+				const fb_button_colors_t buttonColors = {
+					fb_theme()->text, fb_theme()->bg, fb_theme()->secondary,
+					fb_theme()->select, fb_theme()->accent, fb_theme()->good,
+					fb_theme()->danger, fb_theme()->secondary, fb_theme()->select,
+				};
+				fb_modal_semantic(TOP_SCREEN, modalCol, modalRow, modalCols, modalRows,
+					fb_theme()->warn, fb_theme()->bg, fb_theme()->danger, FB_MODAL_TONE_NORMAL);
+				fb_draw_aligned(TOP_SCREEN, (modalCol + 2) * FB_GLYPH_W,
+					(modalRow + 1) * FB_GLYPH_H, (modalCols - 4) * FB_GLYPH_W,
+					FB_TEXT_ALIGN_CENTER, fb_theme()->text, "Back up flash");
+				fb_draw_wrapped_page(TOP_SCREEN, (modalCol + 2) * FB_GLYPH_W,
+					(modalRow + 3) * FB_GLYPH_H, (modalCols - 4) * FB_GLYPH_W,
+					7, fb_theme()->text,
+					"Dumping this cart's flashrom to /cart-backups on your SD card.\n\n"
+					"Nothing is written to the cart.\n\n"
+					"If it fails, or the dump is nonsense, STOP and open a GitHub issue.");
+				if (!fb_button_group_layout_cells(&buttonGroup, &buttonBounds,
+						buttonRects, sizeof(buttonRects) / sizeof(buttonRects[0]),
+						&buttonLayout)) {
+					fb_draw_status(TOP_SCREEN, modalRow + 11, FB_STATUS_ERROR,
+						fb_theme()->danger, fb_theme()->bg, "Buttons do not fit");
+					WaitPress(KEY_B);
+					confirmed = false;
+				} else {
+					fb_draw_button_group(TOP_SCREEN, &buttonGroup, &buttonLayout,
+						&buttonColors);
+					fb_modal_state_t backupModal = {};
+					fb_modal_open(&backupModal);
+					const int activated = WaitButtonGroup(&buttonGroup, &buttonLayout,
+						&buttonColors);
+					fb_modal_close(&backupModal, activated == 1
+						? FB_MODAL_RESULT_ACCEPTED : FB_MODAL_RESULT_CANCELLED);
+					confirmed = fb_modal_take_result(&backupModal) == FB_MODAL_RESULT_ACCEPTED;
+				}
 			}
 			else
 			{
-				// Banner/icon note is write-only: restoring an untouched dump
-				// leaves the banner byte-identical, so it can't break stock
-				// DSi/3DS loading.
-				DrawString(TOP_SCREEN, 22, (5 * FONT_HEIGHT), COLOR_WHITE,
-					"This overwrites the cart's flashrom\nand can't be undone.\n\nA changed icon or banner is blocked\nby stock DSi/3DS firmware unless CFW\nis installed. NDS/DS Lite are fine.");
-				DrawStringCentered(TOP_SCREEN, (12 * FONT_HEIGHT), COLOR_YELLOW, "Enter the key combo to confirm:");
-				confirmed = d0k3_buttoncombo(14 * FONT_HEIGHT);
+				confirmed = d0k3_buttoncombo(RenderWriteConfirmationModal());
 			}
 
 			if (confirmed)
 			{
-				ClearScreen(BOTTOM_SCREEN, COLOR_BLACK);
+				// Clear the accepted modal before any FAT, allocation, or file
+				// setup. Those steps can block long enough for its stale border
+				// and buttons to look like the active backup screen.
+				DrawHeader(TOP_SCREEN, cart->getName());
+				fb_clear(BOTTOM_SCREEN, fb_theme()->bg);
 				if (menu_sel == 0) {
 					ntrboot_return = DumpFlash(cart);
 				} else if (menu_sel == 1) {
@@ -354,78 +567,78 @@ void menu_lvl2(Flashcart* cart)
 
 				switch (ntrboot_return) {
 					case FAT_MOUNT_FAILED:
-						DrawString(TOP_SCREEN, FONT_WIDTH, (15 * FONT_HEIGHT), COLOR_RED,
+						fb_draw_wrapped_chars(TOP_SCREEN, UiContentX(1), UiContentY(14), fb_theme()->danger,
 							"Couldn't access the SD card.\nMake sure it's inserted.");
-						DrawString(TOP_SCREEN, FONT_WIDTH, (18 * FONT_HEIGHT), COLOR_YELLOW,
+						fb_draw_wrapped_chars(TOP_SCREEN, UiContentX(1), UiContentY(17), fb_theme()->warn,
 							"Press <B> to go back.");
 						WaitPress(KEY_B);
-						ClearScreen(TOP_SCREEN, COLOR_BLACK);
+						fb_clear(TOP_SCREEN, fb_theme()->bg);
 						break;
 
 					case FILE_OPEN_FAILED:
 						if (menu_sel == 0) {
-							DrawString(TOP_SCREEN, FONT_WIDTH, (15 * FONT_HEIGHT), COLOR_RED,
+							fb_draw_wrapped_chars(TOP_SCREEN, UiContentX(1), UiContentY(14), fb_theme()->danger,
 								"Couldn't create the backup file.\nCheck the SD card isn't full or locked.");
 						} else {
-							DrawString(TOP_SCREEN, FONT_WIDTH, (15 * FONT_HEIGHT), COLOR_RED,
+							fb_draw_wrapped_chars(TOP_SCREEN, UiContentX(1), UiContentY(14), fb_theme()->danger,
 								"Couldn't open the selected file.\nIt may have been moved or deleted.");
 						}
-						DrawString(TOP_SCREEN, FONT_WIDTH, (18 * FONT_HEIGHT), COLOR_YELLOW,
+						fb_draw_wrapped_chars(TOP_SCREEN, UiContentX(1), UiContentY(17), fb_theme()->warn,
 							"Press <B> to go back.");
 						WaitPress(KEY_B);
-						ClearScreen(TOP_SCREEN, COLOR_BLACK);
+						fb_clear(TOP_SCREEN, fb_theme()->bg);
 						break;
 
 					case FILE_IO_FAILED:
 						if (menu_sel == 0) {
-							DrawString(TOP_SCREEN, FONT_WIDTH, (15 * FONT_HEIGHT), COLOR_RED,
+							fb_draw_wrapped_chars(TOP_SCREEN, UiContentX(1), UiContentY(14), fb_theme()->danger,
 								"Could not write the backup file.\nCheck the SD card has free space.");
 						} else {
-							DrawString(TOP_SCREEN, FONT_WIDTH, (15 * FONT_HEIGHT), COLOR_RED,
+							fb_draw_wrapped_chars(TOP_SCREEN, UiContentX(1), UiContentY(14), fb_theme()->danger,
 								"Failed to read the selected file.\nThe file is damaged or SD card is loose.");
 						}
-						DrawString(TOP_SCREEN, FONT_WIDTH, (18 * FONT_HEIGHT), COLOR_YELLOW,
+						fb_draw_wrapped_chars(TOP_SCREEN, UiContentX(1), UiContentY(17), fb_theme()->warn,
 							"Press <B> to go back.");
 						WaitPress(KEY_B);
-						ClearScreen(TOP_SCREEN, COLOR_BLACK);
+						fb_clear(TOP_SCREEN, fb_theme()->bg);
 						break;
 
 					case FLASH_OP_FAILED:
 						if (menu_sel == 0) {
-							DrawString(TOP_SCREEN, FONT_WIDTH, (15 * FONT_HEIGHT), COLOR_RED,
+							fb_draw_wrapped_chars(TOP_SCREEN, UiContentX(1), UiContentY(14), fb_theme()->danger,
 								"Reading from the cart failed\npartway through. Try reseating it.");
 						} else {
-							DrawString(TOP_SCREEN, FONT_WIDTH, (15 * FONT_HEIGHT), COLOR_RED,
+							fb_draw_wrapped_chars(TOP_SCREEN, UiContentX(1), UiContentY(14), fb_theme()->danger,
 								"Writing to the cart failed\npartway through. Try reseating it.");
 						}
-						DrawString(TOP_SCREEN, FONT_WIDTH, (18 * FONT_HEIGHT), COLOR_YELLOW,
+						fb_draw_wrapped_chars(TOP_SCREEN, UiContentX(1), UiContentY(17), fb_theme()->warn,
 							"Press <B> to return to the menu.");
 						WaitPress(KEY_B);
-						ClearScreen(TOP_SCREEN, COLOR_BLACK);
+						fb_clear(TOP_SCREEN, fb_theme()->bg);
 						break;
 
 					case MEM_ALLOC_FAILED:
-						DrawString(TOP_SCREEN, FONT_WIDTH, (15 * FONT_HEIGHT), COLOR_RED,
+						fb_draw_wrapped_chars(TOP_SCREEN, UiContentX(1), UiContentY(14), fb_theme()->danger,
 							"Not enough free console memory\nto buffer the cartridge firmware.");
-						DrawString(TOP_SCREEN, FONT_WIDTH, (18 * FONT_HEIGHT), COLOR_YELLOW,
+						fb_draw_wrapped_chars(TOP_SCREEN, UiContentX(1), UiContentY(17), fb_theme()->warn,
 							"Press <B> to go back.");
 						WaitPress(KEY_B);
-						ClearScreen(TOP_SCREEN, COLOR_BLACK);
+						fb_clear(TOP_SCREEN, fb_theme()->bg);
 						break;
 
 					case ALL_OK:
 						if (menu_sel == 0) {
-							DrawString(TOP_SCREEN, FONT_WIDTH, (15 * FONT_HEIGHT), COLOR_GREEN,
+							fb_draw_wrapped_chars(TOP_SCREEN, UiContentX(1), UiContentY(14), fb_theme()->good,
 								"Backup complete!\nYour dump was saved successfully.");
 						} else {
-							DrawString(TOP_SCREEN, FONT_WIDTH, (15 * FONT_HEIGHT), COLOR_GREEN,
+							fb_draw_wrapped_chars(TOP_SCREEN, UiContentX(1), UiContentY(14), fb_theme()->good,
 								"All done!\nYour flashrom was written successfully.");
 						}
-						DrawString(TOP_SCREEN, FONT_WIDTH, (18 * FONT_HEIGHT), COLOR_YELLOW,
+						fb_draw_wrapped_chars(TOP_SCREEN, UiContentX(1), UiContentY(17), fb_theme()->warn,
 							"Press <A> to continue.");
 						WaitPress(KEY_A);
-						ClearScreen(TOP_SCREEN, COLOR_BLACK);
-						ClearScreen(BOTTOM_SCREEN, COLOR_BLACK);
+						fb_clear(TOP_SCREEN, fb_theme()->bg);
+						fb_clear(BOTTOM_SCREEN, fb_theme()->bg);
 						break;
 				}
 				// A completed operation (whatever the result) always returns
@@ -440,7 +653,8 @@ void menu_lvl2(Flashcart* cart)
 			// list. No separate "nothing was touched" screen: <B> already
 			// means cancel on both prompts.
 			DrawHeader(TOP_SCREEN, cart->getName());
-			DrawString(TOP_SCREEN, FONT_WIDTH, SCREEN_HEIGHT - FONT_HEIGHT, COLOR_YELLOW, "<A> Select   <B> Back");
+			fb_draw_action_bar(TOP_SCREEN, UiPageRegions().footer.row, fb_theme()->text, fb_theme()->select, selectActions,
+				sizeof(selectActions) / sizeof(selectActions[0]));
 			dirty = true;
 			continue;
 		}
@@ -448,96 +662,100 @@ void menu_lvl2(Flashcart* cart)
 }
 
 // Prints a GodMode9-style "input this combo" prompt and checks the presses.
-const char rancombo_symbols[5] = { '\x1B', '\x18', '\x1A', '\x19', 'A' }; // Left, Up, Right, Down
-const u32 rancombo_inputs[5] = { KEY_LEFT, KEY_UP, KEY_RIGHT, KEY_DOWN, KEY_A };
+const char rancombo_symbols[5] = { FB_LEFT, FB_UP, FB_RIGHT, FB_DOWN, 'A' };
+const fb_input_t rancombo_inputs[5] = {
+	FB_INPUT_LEFT, FB_INPUT_UP, FB_INPUT_RIGHT, FB_INPUT_DOWN, FB_INPUT_A,
+};
+
+// Application policy: nds-fb owns sequence progression, while this creates a
+// fresh, non-repeating challenge for each destructive-write attempt.
+static void BuildWriteSequence(fb_input_t (&inputs)[5], char (&symbols)[5])
+{
+	int lastSymbol = -1;
+	for (int i = 0; i < 4; i++) {
+		int symbol = lastSymbol;
+		while (symbol == lastSymbol) { symbol = rand() % 4; }
+		inputs[i] = rancombo_inputs[symbol];
+		symbols[i] = rancombo_symbols[symbol];
+		lastSymbol = symbol;
+	}
+	inputs[4] = rancombo_inputs[4];
+	symbols[4] = rancombo_symbols[4];
+}
 
 bool d0k3_buttoncombo(int cur_r)
 {
 	// Always 5 slots wide, so it centres itself instead of making callers work
 	// the column out; the last slot has no trailing gap.
-	const int combo_width = (4 * (4 * FONT_WIDTH)) + (3 * FONT_WIDTH);
-	const int cur_c = (SCREEN_WIDTH - combo_width) / 2;
+	const fb_cell_rect_t &content = UiPageRegions().content;
+	const int combo_width = (4 * (4 * FB_GLYPH_W)) + (3 * FB_GLYPH_W);
+	const int cur_c = content.col * FB_GLYPH_W +
+		((content.cols * FB_GLYPH_W) - combo_width) / 2;
 
-	// Seeded once in main(), not here -- re-seeding per call from time(NULL)
-	// tied the combo to the clock second instead of advancing it.
-	//
-	// No symbol repeats back-to-back, matching GodMode9 (ui.c: `while (lsh ==
-	// lastlsh) lsh = (PRNG & 0x3)`) -- doubled arrows misread as one, and this
-	// keeps the double-tap tolerance below unambiguous.
-	int num_rancombo[5] = { 0, 0, 0, 0, 4 }; // zero based, '4' is the 5th item (A)
-	int last_symbol = -1;
-	for (int i = 0; i < 4; i++) {
-		int symbol = last_symbol;
-		while (symbol == last_symbol) { symbol = rand() % 4; }
-		num_rancombo[i] = symbol;
-		last_symbol = symbol;
-	}
 	char print_rancombo[5] = { ' ', ' ', ' ', ' ', ' ' };
-	u32 check_rancombo[5] = { 0, 0, 0, 0, 0 };
-	for (int i = 0; i < 5; i++) {
-		print_rancombo[i] = rancombo_symbols[num_rancombo[i]];
-	}
-	for (int i = 0; i < 5; i++) {
-		check_rancombo[i] = rancombo_inputs[num_rancombo[i]];
-	}
-	int depth = 0; // combo progress, 0-based
+	fb_input_t check_rancombo[5] = {};
+	BuildWriteSequence(check_rancombo, print_rancombo);
+	fb_sequence_t sequence;
+	fb_sequence_init(&sequence, check_rancombo,
+		sizeof(check_rancombo) / sizeof(check_rancombo[0]));
+	bool completed = false;
 
 	while (true) {
 		int temp_c = cur_c;
-		u16 cur_color = COLOR_GREEN;
 		for (int i = 0; i < 5; i++) {
-			if (i >= depth) { cur_color = COLOR_WHITE; }
+			const u16 cur_color =
+				i < static_cast<int>(sequence.current) ? fb_theme()->good :
+				i == static_cast<int>(sequence.current) ? fb_theme()->warn :
+				fb_theme()->secondary;
 			d0k3_buttoncombo_print_chars(temp_c, cur_r, cur_color, print_rancombo[i]);
-			temp_c += 4 * FONT_WIDTH; //3 for our printout ('<', 'arrow', '>'), and one for the space that follows it
+			temp_c += 4 * FB_GLYPH_W; //3 for our printout ('<', 'arrow', '>'), and one for the space that follows it
+		}
+
+		if (completed) {
+			swiWaitForVBlank();
+			return true;
 		}
 
 		scanKeys();
-		if (keysDown()) {
-			if (keysDown() & check_rancombo[depth]) {
-				depth++;
-			}
-			else if (keysDown() & KEY_B) {
+		const fb_input_t input = MapButtons(keysDown());
+		if (input) {
+			if (input & FB_INPUT_B) {
 				return false;
 			}
-			else if (depth > 0 && (keysDown() & check_rancombo[depth - 1])) {
-				// Double-tap forgiveness, matching GodMode9 (ui.c: `!(pad_state &
-				// sequence[lvl-1])`). Safe since no symbol repeats back-to-back;
-				// this only suppresses a reset, it never advances the combo.
-			}
-			else {
-				// Clear the combo title (Row 12) and arrows (Row 14) on failure.
-				// Wipes from Row 12 to the bottom of the screen.
-				DrawRectangle(TOP_SCREEN, 0, 12 * FONT_HEIGHT, SCREEN_WIDTH, SCREEN_HEIGHT - 12 * FONT_HEIGHT, COLOR_BLACK);
 
-				// Red error displays on Row 12 (where the combo title was).
-				// Yellow action is drawn at Row 14.
-				DrawStringCentered(TOP_SCREEN, 12 * FONT_HEIGHT, COLOR_RED, "Wrong key combo, nothing was touched.");
-				DrawStringCentered(TOP_SCREEN, 14 * FONT_HEIGHT, COLOR_YELLOW, "<A> Retry   <B> Cancel");
+			switch (fb_sequence_feed(&sequence, input)) {
+			case FB_SEQUENCE_COMPLETE:
+				completed = true;
+				break;
 
+			case FB_SEQUENCE_FAILED:
+				RenderWriteFailureModal();
 				if (!WaitConfirm()) { return false; }
 
-				// Clear the error/action lines and restore the combo title before retrying.
-				DrawRectangle(TOP_SCREEN, 0, 12 * FONT_HEIGHT, SCREEN_WIDTH, SCREEN_HEIGHT - 12 * FONT_HEIGHT, COLOR_BLACK);
-				DrawStringCentered(TOP_SCREEN, 12 * FONT_HEIGHT, COLOR_YELLOW, "Enter the key combo to confirm:");
-				depth = 0;
-			}
-		}
+				cur_r = RenderWriteConfirmationModal();
+				fb_input_t previousSequence[5];
+				memcpy(previousSequence, check_rancombo, sizeof(previousSequence));
+				do {
+					BuildWriteSequence(check_rancombo, print_rancombo);
+				} while (memcmp(previousSequence, check_rancombo,
+					sizeof(previousSequence)) == 0);
+				fb_sequence_init(&sequence, check_rancombo,
+					sizeof(check_rancombo) / sizeof(check_rancombo[0]));
+				break;
 
-		// this is sorta hacky but otherwise the A button doesnt go green
-		if (depth == 5) {
-			depth++;
-		}
-		else if (depth == 6) {
-			return true;
+			case FB_SEQUENCE_IGNORED:
+			case FB_SEQUENCE_ADVANCED:
+				break;
+			}
 		}
 	}
 }
 
 void d0k3_buttoncombo_print_chars(int collumn, int row, u16 color, char character)
 {
-	DrawCharacter(TOP_SCREEN, '<', collumn, row, color);
-	collumn += FONT_WIDTH;
-	DrawCharacter(TOP_SCREEN, character, collumn, row, color);
-	collumn += FONT_WIDTH;
-	DrawCharacter(TOP_SCREEN, '>', collumn, row, color);
+	fb_glyph(TOP_SCREEN, collumn, row, color, '<');
+	collumn += FB_GLYPH_W;
+	fb_glyph(TOP_SCREEN, collumn, row, color, static_cast<unsigned char>(character));
+	collumn += FB_GLYPH_W;
+	fb_glyph(TOP_SCREEN, collumn, row, color, '>');
 }

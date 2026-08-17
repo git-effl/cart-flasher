@@ -1,211 +1,201 @@
 #include "ui.h"
 
-#include <nds.h>
-
 #include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 
-#include "font.h"
+#ifndef CART_FLASHER_VERSION
+#define CART_FLASHER_VERSION "unknown"
+#endif
 
-void InitializeScreens(void) {
-	REG_DISPCNT = MODE_3_2D | DISPLAY_BG3_ACTIVE;
-	REG_DISPCNT_SUB = MODE_3_2D | DISPLAY_BG3_ACTIVE;
+#ifndef CART_FLASHER_COMMIT
+#define CART_FLASHER_COMMIT "unknown"
+#endif
 
-	// Set bg3 on both displays large enough to fill the screen, use 15 bit
-	// RGB color values, and look for bitmap data at character base block 1.
-	REG_BG3CNT = BgSize_R_256x256 | BG_15BITCOLOR | BG_CBB1;
-	REG_BG3CNT_SUB = BgSize_R_256x256 | BG_15BITCOLOR | BG_CBB1;
+u16 *top_screen = nullptr;
+u16 *bottom_screen = nullptr;
 
-	// Don't scale bg3 (set its affine transformation matrix to [[1,0],[0,1]])
-	REG_BG3PA = 1 << 8;
-	REG_BG3PD = 1 << 8;
+// Platform adapter: a synchronous cart probe cannot return to the main loop
+// to advance its spinner, so VBlank updates this one small native glyph while
+// detection owns ARM9. All display writes stay inside the VBlank interval.
+static volatile bool topSpinnerActive = false;
+static volatile unsigned topSpinnerPhase = 0;
+static volatile unsigned topSpinnerVBlanks = 0;
+static int topSpinnerX = 0;
+static int topSpinnerY = 0;
+static u16 topSpinnerColor = 0;
+static u16 topSpinnerBackground = 0;
 
-	REG_BG3PA_SUB = 1 << 8;
-	REG_BG3PD_SUB = 1 << 8;
+static void UpdateTopSpinnerOnVBlank(void)
+{
+	if (!topSpinnerActive || !TOP_SCREEN) {
+		return;
+	}
+	// The native spinner default holds each of its eight frames for four
+	// VBlanks, producing an even 535 ms full cycle at the DS refresh rate.
+	if (++topSpinnerVBlanks < 4) {
+		return;
+	}
+	topSpinnerVBlanks = 0;
+	topSpinnerPhase = (topSpinnerPhase + 1) % fb_spinner_frame_count();
+	fb_draw_spinner(TOP_SCREEN, topSpinnerX, topSpinnerY,
+		topSpinnerColor, topSpinnerBackground, topSpinnerPhase);
 }
 
-void ClearScreen(u16 *screen, u16 color) {
-	// One blocking 32-bit DMA fill (the colour duplicated into both halves)
-	// instead of 49152 halfword stores. Channel 3 is free: libncgc drives the
-	// cart with plain loads/stores and claims no DMA channel, and a screen
-	// clear never overlaps a transfer anyway.
-	const u32 pixel = color | BIT(15);
-	dmaFillWords(pixel | (pixel << 16), screen, SCREEN_WIDTH * SCREEN_HEIGHT * sizeof(u16));
+// Application layout policy: every page reserves native banner and action-bar
+// rows, while its contents occupy the bounded region between them.
+const fb_page_regions_t &UiPageRegions(void)
+{
+	static const fb_page_regions_t regions = [] {
+		fb_page_layout_t layout = fb_page_layout_default();
+		fb_page_regions_t result;
+		fb_page_layout_bounds(&layout, &result);
+		return result;
+	}();
+	return regions;
 }
 
-void DrawRectangle(u16 *screen, int x, int y, int width, int height, u16 color) {
-	const u16 pixel = color | BIT(15);
-	// Row-major: a row is a sequential run of halfwords. The old column-major
-	// order strided a full 512-byte row between every single store.
-	for (int r = y; r < y + height; r++) {
-		u16 *row = screen + (r * SCREEN_WIDTH) + x;
-		for (int c = 0; c < width; c++) {
-			row[c] = pixel;
+int UiContentX(int column)
+{
+	return (UiPageRegions().content.col + column) * FB_GLYPH_W;
+}
+
+int UiContentY(int row)
+{
+	return (UiPageRegions().content.row + row) * FB_GLYPH_H;
+}
+
+int UiContentRows(void)
+{
+	return UiPageRegions().content.rows;
+}
+
+int UiFooterY(void)
+{
+	return UiPageRegions().footer.row * FB_GLYPH_H;
+}
+
+void InitializeScreens(void)
+{
+	// Platform implementation: nds-fb deliberately owns no libnds video setup.
+	videoSetMode(MODE_5_2D | DISPLAY_BG3_ACTIVE);
+	videoSetModeSub(MODE_5_2D | DISPLAY_BG3_ACTIVE);
+	vramSetBankA(VRAM_A_MAIN_BG);
+	vramSetBankC(VRAM_C_SUB_BG);
+
+	const int top = bgInit(3, BgType_Bmp16, BgSize_B16_256x256, 0, 0);
+	const int bottom = bgInitSub(3, BgType_Bmp16, BgSize_B16_256x256, 0, 0);
+	top_screen = static_cast<u16 *>(bgGetGfxPtr(top));
+	bottom_screen = static_cast<u16 *>(bgGetGfxPtr(bottom));
+
+	(void)fb_set_theme(&fb_theme_dark);
+	fb_clear(TOP_SCREEN, fb_theme()->bg);
+	fb_clear(BOTTOM_SCREEN, fb_theme()->bg);
+	irqSet(IRQ_VBLANK, UpdateTopSpinnerOnVBlank);
+	irqEnable(IRQ_VBLANK);
+}
+
+void StartTopSpinnerAnimation(int x, int y, u16 color, u16 background)
+{
+	topSpinnerX = x;
+	topSpinnerY = y;
+	topSpinnerColor = color;
+	topSpinnerBackground = background;
+	topSpinnerPhase = 0;
+	topSpinnerVBlanks = 0;
+	fb_draw_spinner(TOP_SCREEN, x, y, color, background, topSpinnerPhase);
+	topSpinnerActive = true;
+}
+
+void StopTopSpinnerAnimation(void)
+{
+	topSpinnerActive = false;
+}
+
+// Application adapter: nds-fb deliberately accepts complete strings instead
+// of variadic formats, so formatting stays outside the renderer.
+static char *formatString(const char *format, va_list args, char (&stack)[256])
+{
+	va_list retry;
+	va_copy(retry, args);
+	const int written = vsnprintf(stack, sizeof(stack), format, args);
+	if (written < 0) {
+		va_end(retry);
+		return nullptr;
+	}
+
+	char *text = stack;
+	if (static_cast<unsigned int>(written) >= sizeof(stack)) {
+		text = static_cast<char *>(malloc(static_cast<size_t>(written) + 1));
+		if (text) {
+			vsnprintf(text, static_cast<size_t>(written) + 1, format, retry);
+		} else {
+			text = stack;
 		}
 	}
-}
-
-void DrawCharacter(u16 *screen, int character, int x, int y, u16 color) {
-	const u16 pixel = color | BIT(15);
-	for (int yy = 0; yy < FONT_HEIGHT; yy++) {
-		uint8_t charPos = font[character * FONT_HEIGHT + yy];
-		// Row base hoisted out of the pixel loop, so the offset is a multiply
-		// per row instead of one per lit pixel.
-		u16 *row = screen + ((y + yy) * SCREEN_WIDTH) + x;
-		for (int xx = (8 - FONT_WIDTH); xx <= 7; xx++) {
-			if ((charPos >> xx) & 1) {
-				// Bit 7 (MSB) is the glyph's leftmost pixel, bit (8-FONT_WIDTH)
-				// its rightmost -- offset must be 7-xx (0 for bit 7, up to
-				// FONT_WIDTH-1 for bit 8-FONT_WIDTH). `FONT_WIDTH - xx` was off
-				// by one, drawing every glyph shifted 1px left of `x` (columns
-				// -1..FONT_WIDTH-2 instead of 0..FONT_WIDTH-1) -- present since
-				// this project's first commit, never actually visible because
-				// the shift is uniform across every pixel of every glyph.
-				row[7 - xx] = pixel;
-			}
-		}
-	}
-}
-
-void DrawString(u16* screen, int x, int y, u16 color, const char *str)
-{
-	const int startx = x;
-	const size_t len = strlen(str);
-	for (size_t i = 0; i < len; i++)
-	{
-		if (str[i] == '\n')
-		{
-			x = startx;
-			y += FONT_HEIGHT;
-			continue;
-		}
-		if ((y + FONT_HEIGHT) > SCREEN_HEIGHT)
-		{
-			break;
-		}
-
-		if ((x + FONT_WIDTH) > SCREEN_WIDTH)
-		{
-			x = startx;
-			y += FONT_HEIGHT;
-		}
-		// Cast because `char` is signed under -fsigned-char, which would index
-		// font[] negatively for any byte over 0x7F.
-		DrawCharacter(screen, (unsigned char)str[i], x, y, color);
-		x += FONT_WIDTH;
-	}
-}
-
-// The title is always centred -- every caller open-coded the same
-// (SCREEN_WIDTH - strlen * FONT_WIDTH) / 2 offset, two of them by hand-counting
-// the literal's length, so there was never a second thing the parameter could be.
-void DrawHeader(u16* screen, const char *str)
-{
-	ClearScreen(screen, COLOR_BLACK);
-	DrawRectangle(screen, 0, 0, SCREEN_WIDTH, FONT_HEIGHT, COLOR_BLUE);
-	DrawStringCentered(screen, 0, COLOR_WHITE, str);
-}
-
-// Draws a single selectable list row: a full-width highlight bar behind the
-// text when selected, so focus is obvious at a glance instead of relying on
-// a text-color change alone. Always redraws the row's background so a
-// previously-highlighted row doesn't leave a stray colored bar behind when
-// the selection moves.
-void DrawListRow(u16 *screen, int y, bool selected, u16 highlightColor, const char *text)
-{
-	DrawRectangle(screen, 0, y, SCREEN_WIDTH, FONT_HEIGHT, selected ? highlightColor : COLOR_BLACK);
-	DrawString(screen, FONT_WIDTH, y, selected ? COLOR_BLACK : COLOR_WHITE, text);
-}
-
-// Plain button-hint line, matching every other screen -- replaces a
-// permanent 3-row grey status box; version info moved to the boot screen.
-// <START> still powers off from this screen (HandlePowerOffShortcut(), called
-// from menu_lvl1's loop) -- just not advertised here, unlike the boot splash.
-void DrawFooter(int loglevel)
-{
-	DrawRectangle(TOP_SCREEN, 0, SCREEN_HEIGHT - FONT_HEIGHT, SCREEN_WIDTH, FONT_HEIGHT, COLOR_BLACK);
-	// Local copy of the level names, since the array in ntrboot_flasher's
-	// `platform.cpp` isn't visible here. The out-of-range fallback matters: the
-	// old if-chain had no else, so any level outside 0-4 left the pointer
-	// uninitialised and printed whatever was on the stack.
-	static const char *const loglevel_names[] = { "DEBUG", "INFO", "NOTICE", "WARN", "ERROR" };
-	const char *loglevel_str = (loglevel >= 0 && loglevel < (int)(sizeof(loglevel_names) / sizeof(loglevel_names[0])))
-		? loglevel_names[loglevel] : "?";
-	DrawStringF(TOP_SCREEN, FONT_WIDTH, SCREEN_HEIGHT - FONT_HEIGHT, COLOR_YELLOW, "<A> Select   <Y> Log: %s", loglevel_str);
-}
-
-// Horizontally centres each line on its own width, so a multi-line string reads
-// as a centred block. Centering the whole string off strlen() instead would
-// count the '\n' and every following line into the first line's width, pushing
-// it left and leaving the rest hanging off its edge -- which is why callers used
-// to place multi-line confirmation text one DrawString at a time.
-void DrawStringCentered(u16 *screen, int y, u16 color, const char *str)
-{
-	while (*str)
-	{
-		const char *eol = strchr(str, '\n');
-		const int len = eol ? (int)(eol - str) : (int)strlen(str);
-
-		if ((y + FONT_HEIGHT) > SCREEN_HEIGHT) return;
-
-		int x = (SCREEN_WIDTH - (len * FONT_WIDTH)) / 2;
-		// A line wider than the screen centres to a negative x, and nothing in
-		// this file clips on the left -- the leading glyphs would be written
-		// behind the framebuffer's base address. Cart names come from the
-		// drivers, so the width isn't fixed at compile time.
-		if (x < 0) x = 0;
-
-		// Drawn per glyph rather than via DrawString because an over-wide line
-		// must be truncated at the right edge, not wrapped to a second row that
-		// DrawString would then align to this line's centred x.
-		for (int i = 0; i < len && (x + FONT_WIDTH) <= SCREEN_WIDTH; i++, x += FONT_WIDTH)
-		{
-			DrawCharacter(screen, (unsigned char)str[i], x, y, color);
-		}
-
-		y += FONT_HEIGHT;
-		if (!eol) break;
-		str = eol + 1;
-	}
+	va_end(retry);
+	return text;
 }
 
 void DrawStringF(u16 *screen, int x, int y, u16 color, const char *format, ...)
 {
-	char str[256];
-	char *p = str;
-	va_list va, va_retry;
-
-	va_start(va, format);
-	// A va_list is spent after one vsnprintf() call -- reusing it for the
-	// retry below without a fresh copy is undefined behavior (silently
-	// "worked" on this ARM EABI target since va_list is just a stack
-	// pointer, but not guaranteed). va_copy() before the first call gives
-	// the overflow path its own valid, unconsumed list.
-	va_copy(va_retry, va);
-	int w = vsnprintf(str, sizeof(str), format, va);
-	va_end(va);
-	if (w < 0) {
-		// printf failed
-		va_end(va_retry);
+	char stack[256];
+	va_list args;
+	va_start(args, format);
+	char *text = formatString(format, args, stack);
+	va_end(args);
+	if (!text) {
 		return;
 	}
-	else if ((unsigned int)w > sizeof(str) - 1) {
-		// cry now
-		// allocate a buffer big enough
-		char *m = (char *)malloc(w + 1);
-		if (m) {
-			vsnprintf(m, w + 1, format, va_retry);
-			p = m;
-		} // if malloc fails, we just write the truncated string i guess
+	fb_draw_wrapped_chars(screen, x, y, color, text);
+	if (text != stack) {
+		free(text);
 	}
-	va_end(va_retry);
+}
 
-	DrawString(screen, x, y, color, p);
-	if (p != str && p) {
-		free(p);
+void DrawWrappedF(u16 *screen, int x, int y, int width, u16 color, const char *format, ...)
+{
+	char stack[256];
+	va_list args;
+	va_start(args, format);
+	char *text = formatString(format, args, stack);
+	va_end(args);
+	if (!text) {
+		return;
 	}
+	fb_draw_wrapped(screen, x, y, width, color, text);
+	if (text != stack) {
+		free(text);
+	}
+}
+
+void DrawHeader(u16 *screen, const char *str)
+{
+	// Application chrome: build provenance belongs on the top display only.
+	const fb_theme_t *theme = fb_theme();
+	char provenance[64];
+	snprintf(provenance, sizeof(provenance), "%s %s",
+		CART_FLASHER_VERSION, CART_FLASHER_COMMIT);
+	fb_clear(screen, theme->bg);
+	fb_draw_banner(screen, UiPageRegions().header.row, theme->text, theme->accent,
+		str, screen == TOP_SCREEN ? provenance : "");
+}
+
+void DrawFooter(int loglevel)
+{
+	// Application chrome: logging is this app's only persistent top-menu state.
+	static const char *const loglevelNames[] = { "DEBUG", "INFO", "NOTICE", "WARN", "ERROR" };
+	const char *loglevelText = (loglevel >= 0 &&
+		loglevel < static_cast<int>(sizeof(loglevelNames) / sizeof(loglevelNames[0])))
+		? loglevelNames[loglevel] : "?";
+	char logAction[16];
+	snprintf(logAction, sizeof(logAction), "Log: %s", loglevelText);
+	const fb_action_t actions[] = {
+		{ FB_INPUT_A, "Select", nullptr, 0 },
+		{ FB_INPUT_Y, logAction, nullptr, 0 },
+	};
+	fb_draw_action_bar(TOP_SCREEN, UiPageRegions().footer.row, fb_theme()->text, fb_theme()->select, actions, sizeof(actions) / sizeof(actions[0]));
 }
 
 uint32_t progress_current_override = 0;
@@ -217,62 +207,51 @@ void SetProgressOverride(uint32_t current, uint32_t total)
 	progress_total_override = total;
 }
 
-//https://github.com/ntrteam/ntrboot_flasher/blob/master/source/common/ui.cpp#L201
-void ShowProgress(u16 *screen, uint32_t current, uint32_t total, const char* status)
+void ShowProgress(u16 *screen, uint32_t current, uint32_t total, const char *status)
 {
-	// Leaves FONT_WIDTH either side, so the bar and its label line up with the
-	// left margin every other screen uses. bar_pos_x and text_pos_x derive from it.
-	const uint8_t bar_width = SCREEN_WIDTH - (2 * FONT_WIDTH);
-	const uint8_t bar_height = 12;
-	const uint16_t bar_pos_x = (SCREEN_WIDTH - bar_width) / 2;
-	const uint16_t bar_pos_y = (SCREEN_HEIGHT / 2) - (bar_height / 2);
-	const uint16_t text_pos_x = bar_pos_x + (bar_width / 2) - (FONT_WIDTH * 2);
-	const uint16_t text_pos_y = bar_pos_y + 1;
-
-	// Apply overrides
-	if (progress_total_override) total = progress_total_override;
+	// Application progress policy: drivers report relative progress while
+	// StreamFlash supplies the absolute chunk offset through these overrides.
+	if (progress_total_override) {
+		total = progress_total_override;
+	}
 	current += progress_current_override;
-	// Clamp instead of zeroing: an overshooting caller must not rewind the bar.
-	if (current > total) current = total;
-
-	static uint32_t last_prog_width = 1;
-	static uint32_t last_prog_percent = 101;
-	static char last_status[48];
-	uint32_t prog_width = (total > 0) ? (current * (bar_width - 4)) / total : 0;
-	uint32_t prog_percent = (total > 0) ? (current * 100) / total : 0;
-
-	// Fresh operation: paint the backdrop and bar outline once.
-	if (current == 0)
-	{
-		ClearScreen(screen, STD_COLOR_BG);
-		DrawRectangle(screen, bar_pos_x, bar_pos_y, bar_width, bar_height, STD_COLOR_FONT);
-		DrawRectangle(screen, bar_pos_x + 1, bar_pos_y + 1, bar_width - 2, bar_height - 2, STD_COLOR_BG);
-		last_prog_width = 0;
-		last_prog_percent = 101;
-		last_status[0] = '\0';
+	if (current > total) {
+		current = total;
 	}
 
-	// Status label: redraw only when the text actually changes. Redrawing it
-	// on every call made the label visibly flicker, worst when two callers
-	// alternated different strings for the same operation.
-	if (status && strncmp(status, last_status, sizeof(last_status) - 1) != 0)
-	{
-		DrawRectangle(screen, bar_pos_x, bar_pos_y - FONT_HEIGHT - 4, bar_width, FONT_HEIGHT, STD_COLOR_BG);
-		DrawString(screen, bar_pos_x, bar_pos_y - FONT_HEIGHT - 4, STD_COLOR_FONT, status);
-		strncpy(last_status, status, sizeof(last_status) - 1);
-		last_status[sizeof(last_status) - 1] = '\0';
+	static bool initialized = false;
+	static char previousStatus[48] = {};
+	const fb_cell_rect_t &content = UiPageRegions().content;
+	const int barWidth = (content.cols - 2) * FB_GLYPH_W;
+	const int barHeight = 12;
+	const int barX = UiContentX(1);
+	const int barY = content.row * FB_GLYPH_H +
+		((content.rows * FB_GLYPH_H) - barHeight) / 2;
+	const int statusY = barY - FB_GLYPH_H - 4;
+	const int percentY = barY + barHeight + 1;
+	const fb_theme_t *theme = fb_theme();
+
+	if (current == 0 || !initialized) {
+		fb_clear(screen, theme->bg);
+		initialized = true;
+		previousStatus[0] = '\0';
+	}
+	const fb_progress_indicator_t indicator = {
+		FB_PROGRESS_DETERMINATE, current, total, 0,
+	};
+	// The native percentage label is transparent and now lives under the
+	// bar. Clear its row before every redraw so a shorter percentage cannot
+	// leave glyph tails from the prior value.
+	fb_rect(screen, barX, percentY, barWidth, FB_GLYPH_H, theme->bg);
+	fb_draw_progress_indicator(screen, barX, barY, barWidth, barHeight,
+		theme->secondary, theme->good, theme->bg, &indicator);
+
+	if (status && strncmp(status, previousStatus, sizeof(previousStatus) - 1) != 0) {
+		fb_rect(screen, barX, statusY, barWidth, FB_GLYPH_H, theme->bg);
+		fb_draw_aligned(screen, barX, statusY, barWidth, FB_TEXT_ALIGN_CENTER,
+			theme->text, status);
+		strncpy(previousStatus, status, sizeof(previousStatus) - 1);
+		previousStatus[sizeof(previousStatus) - 1] = '\0';
 	}
 
-	// Bar and percent: repaint only on change. A shrinking width (multi-pass
-	// operations like erase-then-write) repaints just the bar interior,
-	// never the whole screen.
-	if (prog_width != last_prog_width || prog_percent != last_prog_percent)
-	{
-		DrawRectangle(screen, bar_pos_x + 1, bar_pos_y + 1, bar_width - 2, bar_height - 2, STD_COLOR_BG); // Clear the progress bar before re-rendering.
-		DrawRectangle(screen, bar_pos_x + 2, bar_pos_y + 2, prog_width, bar_height - 4, COLOR_GREEN);
-		DrawStringF(screen, text_pos_x, text_pos_y, STD_COLOR_FONT, "%3lu%%", prog_percent);
-	}
-
-	last_prog_width = prog_width;
-	last_prog_percent = prog_percent;
 }

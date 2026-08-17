@@ -154,7 +154,7 @@ namespace flashcart_core {
 //
 // Goes to the log *and* the screen: a cart that won't detect leaves a
 // readable log, but an SD card that won't mount leaves none at all.
-void LogHardwareProbe(int firstRow)
+void LogHardwareProbe(int firstContentRow)
 {
 	TIMER0_CR = 0;
 	TIMER0_DATA = 0;
@@ -199,22 +199,51 @@ void LogHardwareProbe(int firstRow)
 		fclose(probeLogFile);
 	}
 
-	// The screen keeps its own layout: one field per line, colour-coded, spaced
-	// for glancing at -- photograph it when there is no SD to log to.
-	DrawStringF(BOTTOM_SCREEN, FONT_WIDTH, (firstRow + 0) * FONT_HEIGHT, COLOR_WHITE,
-		"dsi=%d  clk=0x%04X  ticks=%u", isDSiMode(), REG_SCFG_CLK, ticks);
-	DrawStringF(BOTTOM_SCREEN, FONT_WIDTH, (firstRow + 1) * FONT_HEIGHT, COLOR_WHITE,
-		"SCFG_EXT=0x%08lX", (unsigned long)REG_SCFG_EXT);
-	DrawStringF(BOTTOM_SCREEN, FONT_WIDTH, (firstRow + 2) * FONT_HEIGHT, arm9OwnsCart ? COLOR_GREEN : COLOR_RED,
-		"EXMEMCNT=0x%04X  cart: %s", REG_EXMEMCNT, arm9OwnsCart ? "ARM9" : "ARM7");
-	DrawStringF(BOTTOM_SCREEN, FONT_WIDTH, (firstRow + 3) * FONT_HEIGHT, COLOR_WHITE,
-		"ROMCTRL=0x%08lX", (unsigned long)REG_ROMCTRL);
-	DrawStringF(BOTTOM_SCREEN, FONT_WIDTH, (firstRow + 4) * FONT_HEIGHT, COLOR_WHITE,
-		"AUXSPICNT=0x%04X", REG_AUXSPICNT);
-	DrawStringF(BOTTOM_SCREEN, FONT_WIDTH, (firstRow + 5) * FONT_HEIGHT, COLOR_WHITE,
-		"DLDI on %s, arm7capable=%d", dldiModeStr, arm7Capable);
-	DrawStringF(BOTTOM_SCREEN, FONT_WIDTH, (firstRow + 6) * FONT_HEIGHT, COLOR_WHITE,
-		"DLDI: %s", dldiName);
+	// A probe is a compact table, not prose: one metric per row keeps photos
+	// legible and lets an unexpected value stand out immediately.
+	static const fb_grid_column_t columns[] = {
+		{ 15, 0, FB_TEXT_ALIGN_LEFT },
+		{ 14, 1, FB_TEXT_ALIGN_LEFT },
+	};
+	fb_cell_rect_t probeBounds = UiPageRegions().content;
+	probeBounds.row += firstContentRow;
+	probeBounds.rows -= firstContentRow;
+	fb_grid_layout_t grid = {};
+	if (!fb_grid_layout_cells(&probeBounds, columns,
+			sizeof(columns) / sizeof(columns[0]), 1, &grid)) {
+		return;
+	}
+
+	char tickValue[24];
+	char scfgClockValue[24];
+	char scfgExtValue[24];
+	char romCtrlValue[24];
+	char auxSpiValue[24];
+	snprintf(tickValue, sizeof(tickValue), "%u", ticks);
+	snprintf(scfgClockValue, sizeof(scfgClockValue), "0x%04X", REG_SCFG_CLK);
+	snprintf(scfgExtValue, sizeof(scfgExtValue), "0x%08lX", (unsigned long)REG_SCFG_EXT);
+	snprintf(romCtrlValue, sizeof(romCtrlValue), "0x%08lX", (unsigned long)REG_ROMCTRL);
+	snprintf(auxSpiValue, sizeof(auxSpiValue), "0x%04X", REG_AUXSPICNT);
+	const char *const labels[] = {
+		"DSi mode", "Delay ticks", "SCFG clock", "SCFG ext", "Cart owner",
+		"ROM control", "AUX SPI", "DLDI mode", "ARM7 capable", "DLDI driver",
+	};
+	const char *const values[] = {
+		isDSiMode() ? "Yes" : "No", tickValue, scfgClockValue, scfgExtValue,
+		arm9OwnsCart ? "ARM9" : "ARM7", romCtrlValue, auxSpiValue, dldiModeStr,
+		arm7Capable ? "Yes" : "No", dldiName,
+	};
+
+	for (unsigned row = 0; row < sizeof(labels) / sizeof(labels[0]); row++) {
+		const uint16_t valueColor =
+			row == 4 ? (arm9OwnsCart ? fb_theme()->good : fb_theme()->danger) :
+			row == 8 ? (arm7Capable ? fb_theme()->warn : fb_theme()->text) :
+			fb_theme()->text;
+		(void)fb_draw_grid_cell(BOTTOM_SCREEN, &grid, 0, row, fb_theme()->secondary,
+			fb_theme()->bg, labels[row]);
+		(void)fb_draw_grid_cell(BOTTOM_SCREEN, &grid, 1, row, valueColor,
+			fb_theme()->bg, values[row]);
+	}
 }
 
 static char* calculate_backup_path(const char *cart_name) {
@@ -241,12 +270,14 @@ static return_codes_t StreamFlash(flashcart_core::Flashcart* cart, const char* f
 	// cover at least one complete driver page.
 	const u32 chunkSize = 0x10000;
 
-	// Cleared up front, not just before the progress loop: every early return
-	// below (bad SD card, no memory, can't open the file, file too small)
-	// used to leave the confirm/combo screen behind it, so menu.cpp's error
-	// message at row 15 landed right next to a stale, now-dead "<A>.../<B>..."
-	// prompt from the screen before it.
-	DrawRectangle(TOP_SCREEN, 0, 2 * FONT_HEIGHT, SCREEN_WIDTH, SCREEN_HEIGHT - 2 * FONT_HEIGHT, COLOR_BLACK);
+	// Clear the complete page up front, before FAT/memory/file setup can block:
+	// every early return must remove the accepted confirmation modal and its
+	// buttons before menu.cpp draws an outcome.
+	const fb_cell_rect_t &content = UiPageRegions().content;
+	fb_rect(TOP_SCREEN, UiContentX(0), UiContentY(0),
+		content.cols * FB_GLYPH_W,
+		(content.rows + UiPageRegions().footer.rows) * FB_GLYPH_H,
+		fb_theme()->bg);
 
 	if (mount_fat() != ALL_OK) { return FAT_MOUNT_FAILED; }
 
@@ -286,7 +317,8 @@ static return_codes_t StreamFlash(flashcart_core::Flashcart* cart, const char* f
 	const char *addrVerb = isRead ? "Reading" : "Writing";
 	const char *progressLabel = isRead ? "Reading flash" : "Writing flash";
 
-	DrawString(TOP_SCREEN, FONT_WIDTH, 6 * FONT_HEIGHT, COLOR_WHITE, headerText);
+	fb_draw_heading(TOP_SCREEN, content.row, FB_HEADING_2, fb_theme()->text,
+		fb_theme()->bg, headerText);
 
 	progressCount = 0; // start the driver-side draw throttle from a known phase
 	ShowProgress(BOTTOM_SCREEN, 0, Flash_size, progressLabel);
@@ -295,8 +327,8 @@ static return_codes_t StreamFlash(flashcart_core::Flashcart* cart, const char* f
 		SetProgressOverride(chunkOffset, Flash_size);
 		char addrStr[64];
 		sprintf(addrStr, "%s address: 0x%08lX", addrVerb, chunkOffset);
-		DrawRectangle(TOP_SCREEN, FONT_WIDTH, 8 * FONT_HEIGHT, SCREEN_WIDTH - (2 * FONT_WIDTH), FONT_HEIGHT, COLOR_BLACK);
-		DrawString(TOP_SCREEN, FONT_WIDTH, 8 * FONT_HEIGHT, COLOR_WHITE, addrStr);
+		fb_draw_status(TOP_SCREEN, content.row + 2, FB_STATUS_INFO,
+			fb_theme()->info, fb_theme()->bg, addrStr);
 
 		u32 currentChunkSize = std::min(chunkSize, Flash_size - chunkOffset);
 

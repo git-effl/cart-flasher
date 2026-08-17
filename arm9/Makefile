@@ -8,8 +8,9 @@ LIBNCGC := $(CURDIR)/vendor/libncgc
 
 BUILDDIR	:= build
 SOURCEDIRS	:= source vendor/flashcart_core
-INCLUDEDIRS	:= vendor/flashcart_core $(BUILDDIR) $(BUILDDIR)/data
+INCLUDEDIRS	:= vendor/flashcart_core vendor/nds-fb $(BUILDDIR) $(BUILDDIR)/data
 DATA		:= data
+NDSFB_SOURCES	:= fb.c fb_font.c fb_text.c fb_theme.c fb_tui.c
 
 DEFINES		:= -DARM9 \
 		   -DCART_FLASHER_VERSION=\"$(CART_FLASHER_VERSION)\" \
@@ -44,7 +45,8 @@ V		:= @
 endif
 
 SOURCES_S	:= $(shell find -L $(SOURCEDIRS) -name "*.s")
-SOURCES_C	:= $(shell find -L $(SOURCEDIRS) -name "*.c")
+SOURCES_C	:= $(shell find -L $(SOURCEDIRS) -name "*.c") \
+		   $(addprefix vendor/nds-fb/,$(NDSFB_SOURCES))
 SOURCES_CPP	:= $(filter-out %example.cpp, $(shell find -L $(SOURCEDIRS) -name "*.cpp"))
 SOURCES_BIN	:= $(shell find -L $(DATA) -name "*.*")
 
