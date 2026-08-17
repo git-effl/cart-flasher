@@ -1,0 +1,4 @@
+[submodule "arm9/vendor/nds-fb"]
+	path = arm9/vendor/nds-fb
+	url = https://github.com/tasken/nds-fb.git
+	branch = main
