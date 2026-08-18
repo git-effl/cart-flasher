@@ -51,7 +51,8 @@ Ace3DS+, Acekard 2i, DSTT, R4i Gold 3DS, R4iSDHC family, and R4 SDHC Dual-Core (
 > If you saw `SD card init failed!`, there is no log to send. Take a photo of the screen and attach that instead.
 
 ## Building
-
+ # Before building,get good copies of Blowfish keys (NTR,Dev and Retail) from a DS and DSi BIOS dump,as this repository does not include them.
+ # Plus, this does not endorse piracy,software distribution of any other illegal activities.
 ```shell
 git clone https://github.com/tasken/cart-flasher.git
 cd cart-flasher/
