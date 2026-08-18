@@ -54,7 +54,7 @@ namespace flashcart_core {
 			ShowProgress(BOTTOM_SCREEN, current, total, status);
 		}
 
-		// Opens /cart_flasher.log for one or more writeLogLine() calls sharing a
+		// Opens /cart_flasher.log for one or more writeProbeLogLine() calls sharing a
 		// single open/close bracket. logMessage() below opens/closes once per
 		// call, which is fine for isolated calls -- but LogHardwareProbe()'s
 		// three related lines land close enough together that BlocksDS's FatFs
@@ -87,9 +87,10 @@ namespace flashcart_core {
 			return logfile;
 		}
 
-		static int writeLogLineV(FILE *logfile, log_priority priority, const char *fmt, va_list args)
+		static int writeLogLineV(FILE *logfile, log_priority priority, const char *fmt,
+			va_list args, bool force)
 		{
-			if (priority < global_loglevel) { return 0; }
+			if (!force && priority < global_loglevel) { return 0; }
 
 			const char *priority_str;
 			//I use a bunch of if statements here because the array that has strings over at ntrboot_flasher's `platform.cpp` is not available here
@@ -106,11 +107,11 @@ namespace flashcart_core {
 			return vfprintf(logfile, string_to_write, args);
 		}
 
-		static int writeLogLine(FILE *logfile, log_priority priority, const char *fmt, ...)
+		static int writeProbeLogLine(FILE *logfile, const char *fmt, ...)
 		{
 			va_list args;
 			va_start(args, fmt);
-			int result = writeLogLineV(logfile, priority, fmt, args);
+			int result = writeLogLineV(logfile, LOG_DEBUG, fmt, args, true);
 			va_end(args);
 			return result;
 		}
@@ -124,7 +125,7 @@ namespace flashcart_core {
 
 			va_list args;
 			va_start(args, fmt);
-			int result = writeLogLineV(logfile, priority, fmt, args);
+			int result = writeLogLineV(logfile, priority, fmt, args, false);
 			va_end(args);
 
 			fclose(logfile);
@@ -146,7 +147,7 @@ namespace flashcart_core {
 	}
 }
 
-// Hardware-state probe, logged when the log level switches to DEBUG. The
+// Hardware-state probe, logged whenever the user explicitly launches it. The
 // timer measurement is CPU-speed-independent: it ticks at the fixed 33.5MHz
 // bus clock, so ~8200 ticks means 67MHz, ~4100 means 134MHz, regardless of
 // whether SCFG is readable. EXMEMCNT bit 11 set means the ARM7 owns Slot-1,
@@ -187,14 +188,14 @@ void LogHardwareProbe(int firstContentRow)
 	// next.
 	FILE *probeLogFile = flashcart_core::platform::openLogFileForAppend();
 	if (probeLogFile) {
-		flashcart_core::platform::writeLogLine(probeLogFile, flashcart_core::LOG_DEBUG,
+		flashcart_core::platform::writeProbeLogLine(probeLogFile,
 			"probe: dsi=%d SCFG_CLK=0x%04X SCFG_EXT=0x%08lX delayTicks=%u",
 			isDSiMode(), REG_SCFG_CLK, (unsigned long)REG_SCFG_EXT, ticks);
-		flashcart_core::platform::writeLogLine(probeLogFile, flashcart_core::LOG_DEBUG,
+		flashcart_core::platform::writeProbeLogLine(probeLogFile,
 			"probe: EXMEMCNT=0x%04X ROMCTRL=0x%08lX AUXSPICNT=0x%04X cart=%s",
 			REG_EXMEMCNT, (unsigned long)REG_ROMCTRL, REG_AUXSPICNT,
 			arm9OwnsCart ? "ARM9" : "ARM7");
-		flashcart_core::platform::writeLogLine(probeLogFile, flashcart_core::LOG_DEBUG,
+		flashcart_core::platform::writeProbeLogLine(probeLogFile,
 			"probe: DLDI=%s arm7capable=%d name=%s", dldiModeStr, arm7Capable, dldiName);
 		fclose(probeLogFile);
 	}
@@ -205,7 +206,7 @@ void LogHardwareProbe(int firstContentRow)
 		{ 15, 0, FB_TEXT_ALIGN_LEFT },
 		{ 14, 1, FB_TEXT_ALIGN_LEFT },
 	};
-	fb_cell_rect_t probeBounds = UiPageRegions().content;
+	fb_cell_rect_t probeBounds = UiBottomPageRegions().content;
 	probeBounds.row += firstContentRow;
 	probeBounds.rows -= firstContentRow;
 	fb_grid_layout_t grid = {};
@@ -274,9 +275,9 @@ static return_codes_t StreamFlash(flashcart_core::Flashcart* cart, const char* f
 	// every early return must remove the accepted confirmation modal and its
 	// buttons before menu.cpp draws an outcome.
 	const fb_cell_rect_t &content = UiPageRegions().content;
-	fb_rect(TOP_SCREEN, UiContentX(0), UiContentY(0),
-		content.cols * FB_GLYPH_W,
-		(content.rows + UiPageRegions().footer.rows) * FB_GLYPH_H,
+	fb_rect(TOP_SCREEN, 0, content.row * FB_GLYPH_H,
+		FB_WIDTH,
+		(FB_ROWS - content.row) * FB_GLYPH_H,
 		fb_theme()->bg);
 
 	if (mount_fat() != ALL_OK) { return FAT_MOUNT_FAILED; }
@@ -316,9 +317,24 @@ static return_codes_t StreamFlash(flashcart_core::Flashcart* cart, const char* f
 	const char *headerText = isRead ? "Backing up your cart..." : "Writing to your cart...";
 	const char *addrVerb = isRead ? "Reading" : "Writing";
 	const char *progressLabel = isRead ? "Reading flash" : "Writing flash";
+	const char *fileName = strrchr(filepath, '/');
+	fileName = fileName ? fileName + 1 : filepath;
+	char sourceLine[80];
+	char destinationLine[80];
+	if (isRead) {
+		snprintf(sourceLine, sizeof(sourceLine), "Source: %s", cart->getName());
+		snprintf(destinationLine, sizeof(destinationLine), "Destination: %s", fileName);
+	} else {
+		snprintf(sourceLine, sizeof(sourceLine), "Source: %s", fileName);
+		snprintf(destinationLine, sizeof(destinationLine), "Target: %s", cart->getName());
+	}
 
 	fb_draw_heading(TOP_SCREEN, content.row, FB_HEADING_2, fb_theme()->text,
 		fb_theme()->bg, headerText);
+	fb_cells(TOP_SCREEN, content.col, content.row + 1,
+		fb_theme()->secondary, fb_theme()->bg, sourceLine);
+	fb_cells(TOP_SCREEN, content.col, content.row + 2,
+		fb_theme()->secondary, fb_theme()->bg, destinationLine);
 
 	progressCount = 0; // start the driver-side draw throttle from a known phase
 	ShowProgress(BOTTOM_SCREEN, 0, Flash_size, progressLabel);
@@ -326,8 +342,11 @@ static return_codes_t StreamFlash(flashcart_core::Flashcart* cart, const char* f
 	for (u32 chunkOffset = 0; chunkOffset < Flash_size; chunkOffset += chunkSize) {
 		SetProgressOverride(chunkOffset, Flash_size);
 		char addrStr[64];
-		sprintf(addrStr, "%s address: 0x%08lX", addrVerb, chunkOffset);
-		fb_draw_status(TOP_SCREEN, content.row + 2, FB_STATUS_INFO,
+		snprintf(addrStr, sizeof(addrStr), "%s address: 0x%08lX",
+			addrVerb, static_cast<unsigned long>(chunkOffset));
+		fb_row(TOP_SCREEN, content.row + 4, fb_theme()->info,
+			fb_theme()->bg, "");
+		fb_cells(TOP_SCREEN, UiPageRegions().content.col, content.row + 4,
 			fb_theme()->info, fb_theme()->bg, addrStr);
 
 		u32 currentChunkSize = std::min(chunkSize, Flash_size - chunkOffset);

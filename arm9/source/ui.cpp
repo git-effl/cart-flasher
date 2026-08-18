@@ -22,6 +22,7 @@ u16 *bottom_screen = nullptr;
 static volatile bool topSpinnerActive = false;
 static volatile unsigned topSpinnerPhase = 0;
 static volatile unsigned topSpinnerVBlanks = 0;
+static u16* spinnerScreen = nullptr;
 static int topSpinnerX = 0;
 static int topSpinnerY = 0;
 static u16 topSpinnerColor = 0;
@@ -29,7 +30,7 @@ static u16 topSpinnerBackground = 0;
 
 static void UpdateTopSpinnerOnVBlank(void)
 {
-	if (!topSpinnerActive || !TOP_SCREEN) {
+	if (!topSpinnerActive || !spinnerScreen) {
 		return;
 	}
 	// The native spinner default holds each of its eight frames for four
@@ -39,16 +40,44 @@ static void UpdateTopSpinnerOnVBlank(void)
 	}
 	topSpinnerVBlanks = 0;
 	topSpinnerPhase = (topSpinnerPhase + 1) % fb_spinner_frame_count();
-	fb_draw_spinner(TOP_SCREEN, topSpinnerX, topSpinnerY,
+	fb_draw_spinner(spinnerScreen, topSpinnerX, topSpinnerY,
 		topSpinnerColor, topSpinnerBackground, topSpinnerPhase);
 }
 
-// Application layout policy: every page reserves native banner and action-bar
-// rows, while its contents occupy the bounded region between them.
+// The nds-fb default is an inset content region between full-width outer
+// chrome: columns 1..49 and rows 2..21. Cart-Flasher owns the banner at row
+// 0 and the action bar at row 23, leaving the library's blank separator rows.
 const fb_page_regions_t &UiPageRegions(void)
 {
 	static const fb_page_regions_t regions = [] {
 		fb_page_layout_t layout = fb_page_layout_default();
+		fb_page_regions_t result;
+		fb_page_layout_bounds(&layout, &result);
+		return result;
+	}();
+	return regions;
+}
+
+int UiTopBannerRow(void)
+{
+	return 0;
+}
+
+int UiTopActionBarRow(void)
+{
+	return FB_ROWS - 1;
+}
+
+const fb_page_regions_t &UiBottomPageRegions(void)
+{
+	static const fb_page_regions_t regions = [] {
+		fb_page_layout_t layout = fb_page_layout_default();
+		// The bottom display has no banner chrome. Retain a single outer row
+		// above/below its content instead of the top screen's banner spacing.
+		layout.margin.top = 1;
+		layout.margin.bottom = 1;
+		layout.header_rows = 0;
+		layout.footer_rows = 0;
 		fb_page_regions_t result;
 		fb_page_layout_bounds(&layout, &result);
 		return result;
@@ -71,9 +100,19 @@ int UiContentRows(void)
 	return UiPageRegions().content.rows;
 }
 
-int UiFooterY(void)
+int UiBottomContentX(int column)
 {
-	return UiPageRegions().footer.row * FB_GLYPH_H;
+	return (UiBottomPageRegions().content.col + column) * FB_GLYPH_W;
+}
+
+int UiBottomContentY(int row)
+{
+	return (UiBottomPageRegions().content.row + row) * FB_GLYPH_H;
+}
+
+int UiBottomContentRows(void)
+{
+	return UiBottomPageRegions().content.rows;
 }
 
 void InitializeScreens(void)
@@ -96,21 +135,23 @@ void InitializeScreens(void)
 	irqEnable(IRQ_VBLANK);
 }
 
-void StartTopSpinnerAnimation(int x, int y, u16 color, u16 background)
+void StartSpinnerAnimation(u16* screen, int x, int y, u16 color, u16 background)
 {
+	spinnerScreen = screen;
 	topSpinnerX = x;
 	topSpinnerY = y;
 	topSpinnerColor = color;
 	topSpinnerBackground = background;
 	topSpinnerPhase = 0;
 	topSpinnerVBlanks = 0;
-	fb_draw_spinner(TOP_SCREEN, x, y, color, background, topSpinnerPhase);
+	fb_draw_spinner(spinnerScreen, x, y, color, background, topSpinnerPhase);
 	topSpinnerActive = true;
 }
 
-void StopTopSpinnerAnimation(void)
+void StopSpinnerAnimation(void)
 {
 	topSpinnerActive = false;
+	spinnerScreen = nullptr;
 }
 
 // Application adapter: nds-fb deliberately accepts complete strings instead
@@ -170,7 +211,7 @@ void DrawWrappedF(u16 *screen, int x, int y, int width, u16 color, const char *f
 	}
 }
 
-void DrawHeader(u16 *screen, const char *str)
+void DrawHeaderWithProvenance(u16 *screen, const char *str, bool showProvenance)
 {
 	// Application chrome: build provenance belongs on the top display only.
 	const fb_theme_t *theme = fb_theme();
@@ -178,24 +219,16 @@ void DrawHeader(u16 *screen, const char *str)
 	snprintf(provenance, sizeof(provenance), "%s %s",
 		CART_FLASHER_VERSION, CART_FLASHER_COMMIT);
 	fb_clear(screen, theme->bg);
-	fb_draw_banner(screen, UiPageRegions().header.row, theme->text, theme->accent,
-		str, screen == TOP_SCREEN ? provenance : "");
+	fb_banner_options_t bannerOptions = fb_banner_options_default();
+	bannerOptions.clip = true;
+	bannerOptions.inset_cols = 1;
+	fb_draw_banner_slots(screen, UiTopBannerRow(), theme->text, theme->accent,
+		str, "", showProvenance ? provenance : "", &bannerOptions);
 }
 
-void DrawFooter(int loglevel)
+void DrawHeader(u16 *screen, const char *str)
 {
-	// Application chrome: logging is this app's only persistent top-menu state.
-	static const char *const loglevelNames[] = { "DEBUG", "INFO", "NOTICE", "WARN", "ERROR" };
-	const char *loglevelText = (loglevel >= 0 &&
-		loglevel < static_cast<int>(sizeof(loglevelNames) / sizeof(loglevelNames[0])))
-		? loglevelNames[loglevel] : "?";
-	char logAction[16];
-	snprintf(logAction, sizeof(logAction), "Log: %s", loglevelText);
-	const fb_action_t actions[] = {
-		{ FB_INPUT_A, "Select", nullptr, 0 },
-		{ FB_INPUT_Y, logAction, nullptr, 0 },
-	};
-	fb_draw_action_bar(TOP_SCREEN, UiPageRegions().footer.row, fb_theme()->text, fb_theme()->select, actions, sizeof(actions) / sizeof(actions[0]));
+	DrawHeaderWithProvenance(screen, str, screen == TOP_SCREEN);
 }
 
 uint32_t progress_current_override = 0;
@@ -221,10 +254,11 @@ void ShowProgress(u16 *screen, uint32_t current, uint32_t total, const char *sta
 
 	static bool initialized = false;
 	static char previousStatus[48] = {};
+	static fb_progress_state_t progressState = {};
 	const fb_cell_rect_t &content = UiPageRegions().content;
-	const int barWidth = (content.cols - 2) * FB_GLYPH_W;
+	const int barWidth = content.cols * FB_GLYPH_W;
 	const int barHeight = 12;
-	const int barX = UiContentX(1);
+	const int barX = UiContentX(0);
 	const int barY = content.row * FB_GLYPH_H +
 		((content.rows * FB_GLYPH_H) - barHeight) / 2;
 	const int statusY = barY - FB_GLYPH_H - 4;
@@ -235,16 +269,22 @@ void ShowProgress(u16 *screen, uint32_t current, uint32_t total, const char *sta
 		fb_clear(screen, theme->bg);
 		initialized = true;
 		previousStatus[0] = '\0';
+		const fb_progress_indicator_t indicator = {
+			FB_PROGRESS_DETERMINATE, current, total, 0,
+		};
+		fb_draw_progress_indicator(screen, barX, barY, barWidth, barHeight,
+			theme->secondary, theme->good, theme->bg, &indicator);
+		fb_progress_state_reset(&progressState, barWidth, current, total);
+	} else {
+		(void)fb_progress_update(screen, barX, barY, barWidth, barHeight,
+			current, total, theme->good, theme->bg, &progressState);
+		// The native percentage label is transparent and below the bar. Clear
+		// only its row before repainting it, avoiding stale digits and a full
+		// progress-bar redraw on every transfer update.
+		fb_rect(screen, barX, percentY, barWidth, FB_GLYPH_H, theme->bg);
+		fb_progress_percent(screen, barX, barY, barWidth, barHeight,
+			current, total, theme->secondary);
 	}
-	const fb_progress_indicator_t indicator = {
-		FB_PROGRESS_DETERMINATE, current, total, 0,
-	};
-	// The native percentage label is transparent and now lives under the
-	// bar. Clear its row before every redraw so a shorter percentage cannot
-	// leave glyph tails from the prior value.
-	fb_rect(screen, barX, percentY, barWidth, FB_GLYPH_H, theme->bg);
-	fb_draw_progress_indicator(screen, barX, barY, barWidth, barHeight,
-		theme->secondary, theme->good, theme->bg, &indicator);
 
 	if (status && strncmp(status, previousStatus, sizeof(previousStatus) - 1) != 0) {
 		fb_rect(screen, barX, statusY, barWidth, FB_GLYPH_H, theme->bg);

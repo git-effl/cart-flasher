@@ -39,11 +39,12 @@ int main(void)
 	// access then reads open-bus 0xFFFFFFFF and detection fails. Pin it to ARM9.
 	dldiSetMode(DLDI_MODE_ARM9);
 	if (!fatInitDefault()) {
-		fb_draw_wrapped_chars(BOTTOM_SCREEN, UiContentX(1), UiContentY(1), fb_theme()->danger,
+		fb_draw_wrapped_chars(BOTTOM_SCREEN, UiBottomContentX(0), UiBottomContentY(1), fb_theme()->danger,
 			"SD card init failed!\nLogging, backups and writes\nwon't work this session.");
 		// Nothing can be logged without a card, so put the probe on screen
 		// instead -- it survives until the cart list draws over it.
-		fb_draw_wrapped_chars(BOTTOM_SCREEN, UiContentX(1), UiContentY(5), fb_theme()->secondary, "Hardware probe");
+		fb_draw_heading(BOTTOM_SCREEN, UiBottomPageRegions().content.row + 5,
+			FB_HEADING_2, fb_theme()->text, fb_theme()->bg, "Hardware probe");
 		LogHardwareProbe(7);
 	}
 

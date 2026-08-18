@@ -18,6 +18,16 @@
 
 namespace {
 
+// The picker can move every few VBlanks under held input. Staging both screens
+// lets fb_apply_diff update only the changed rows and context details instead
+// of visibly clearing either framebuffer on each selection change.
+static u16 fileBrowserTopStaging[FB_PIXELS];
+static u16 fileBrowserTopPresented[FB_PIXELS];
+static u16 fileBrowserBottomStaging[FB_PIXELS];
+static u16 fileBrowserBottomPresented[FB_PIXELS];
+static bool fileBrowserFramesValid = false;
+static const fb_status_options_t prefixFreeStatus = { false };
+
 struct FileEntry {
 	char name[256];
 	bool isDir;
@@ -31,12 +41,26 @@ bool HasExtensionCI(const char* name, const char* ext) {
 	return strcasecmp(name + (nameLen - extLen), ext) == 0;
 }
 
-void PathJoin(char* dest, size_t destSize, const char* base, const char* name) {
-	if (strcmp(base, "/") == 0) {
-		snprintf(dest, destSize, "/%s", name);
-	} else {
-		snprintf(dest, destSize, "%s/%s", base, name);
+bool PathJoin(char* dest, size_t destSize, const char* base, const char* name) {
+	if (!dest || destSize == 0) { return false; }
+
+	const size_t baseLength = strlen(base);
+	const size_t nameLength = strlen(name);
+	const bool root = strcmp(base, "/") == 0;
+	const size_t separatorLength = root ? 0 : 1;
+	if (baseLength >= destSize ||
+		nameLength > destSize - baseLength - separatorLength - 1) {
+		dest[0] = '\0';
+		return false;
 	}
+
+	memcpy(dest, base, baseLength);
+	size_t offset = baseLength;
+	if (!root) {
+		dest[offset++] = '/';
+	}
+	memcpy(dest + offset, name, nameLength + 1);
+	return true;
 }
 
 void PathUp(char* path) {
@@ -60,7 +84,11 @@ void ListDirectory(const char* path, const char* ext, std::vector<FileEntry>& ou
 			if (strcmp(ent->d_name, ".") == 0 || strcmp(ent->d_name, "..") == 0) { continue; }
 
 			char fullPath[512];
-			PathJoin(fullPath, sizeof(fullPath), path, ent->d_name);
+			if (!PathJoin(fullPath, sizeof(fullPath), path, ent->d_name)) {
+				flashcart_core::platform::logMessage(flashcart_core::LOG_WARN,
+					"filebrowser: skipping path too long to list: %s", ent->d_name);
+				continue;
+			}
 
 			struct stat st;
 			if (stat(fullPath, &st) != 0) { continue; }
@@ -106,34 +134,43 @@ void BuildBrowserEntries(const std::vector<FileEntry>& entries,
 	}
 }
 
-void RenderSelectionContext(const char* currentPath, const fb_file_browser_t& browser,
-	size_t expectedSize) {
-	DrawHeader(BOTTOM_SCREEN, "Write image");
+void RenderSelectionContext(const char* cartName, const char* currentPath,
+	const fb_file_browser_t& browser, size_t expectedSize, unsigned pathMarqueeOffset) {
+	DrawHeaderWithProvenance(fileBrowserTopStaging, "Cart-Flasher", true);
 	const fb_cell_rect_t &content = UiPageRegions().content;
-	const int detailRow = content.row + 1;
+	fb_draw_heading(fileBrowserTopStaging, content.row, FB_HEADING_2,
+		fb_theme()->text, fb_theme()->bg, cartName);
+	fb_draw_heading(fileBrowserTopStaging, content.row + 2, FB_HEADING_3,
+		fb_theme()->text, fb_theme()->bg, "Write image");
+	const int detailRow = content.row + 4;
 
 	const fb_file_entry_t *selected = fb_file_browser_selected(&browser);
 	if (!selected) {
-		fb_draw_status(BOTTOM_SCREEN, detailRow, FB_STATUS_INFO, fb_theme()->info,
-			fb_theme()->bg, "No image selected");
+		fb_draw_status_options(fileBrowserTopStaging, detailRow, FB_STATUS_INFO, fb_theme()->info,
+			fb_theme()->bg, "No image selected", &prefixFreeStatus);
 		return;
 	}
 
 	if (selected->kind == FB_FILE_ENTRY_PARENT) {
-		fb_draw_status(BOTTOM_SCREEN, detailRow, FB_STATUS_INFO, fb_theme()->info,
-			fb_theme()->bg, "Return to the parent folder");
-		fb_draw_path_bar(BOTTOM_SCREEN, detailRow + 2, fb_theme()->secondary,
-			fb_theme()->bg, currentPath);
+		fb_draw_status_options(fileBrowserTopStaging, detailRow, FB_STATUS_INFO, fb_theme()->info,
+			fb_theme()->bg, "Return to the parent folder", &prefixFreeStatus);
+		fb_draw_path_bar_marquee(fileBrowserTopStaging, detailRow + 2,
+			fb_theme()->secondary, fb_theme()->bg, currentPath, pathMarqueeOffset);
 		return;
 	}
 
 	char fullPath[512];
-	PathJoin(fullPath, sizeof(fullPath), currentPath, selected->name);
+	if (!PathJoin(fullPath, sizeof(fullPath), currentPath, selected->name)) {
+		fb_draw_status_options(fileBrowserTopStaging, detailRow, FB_STATUS_ERROR,
+			fb_theme()->danger, fb_theme()->bg, "Selected path is too long",
+			&prefixFreeStatus);
+		return;
+	}
 	if (selected->kind == FB_FILE_ENTRY_DIRECTORY) {
-		fb_draw_status(BOTTOM_SCREEN, detailRow, FB_STATUS_INFO, fb_theme()->info,
-			fb_theme()->bg, "Open this folder");
-		fb_draw_path_bar(BOTTOM_SCREEN, detailRow + 2, fb_theme()->secondary,
-			fb_theme()->bg, fullPath);
+		fb_draw_status_options(fileBrowserTopStaging, detailRow, FB_STATUS_INFO, fb_theme()->info,
+			fb_theme()->bg, "Open this folder", &prefixFreeStatus);
+		fb_draw_path_bar_marquee(fileBrowserTopStaging, detailRow + 2,
+			fb_theme()->secondary, fb_theme()->bg, fullPath, pathMarqueeOffset);
 		return;
 	}
 
@@ -150,41 +187,47 @@ void RenderSelectionContext(const char* currentPath, const fb_file_browser_t& br
 		selected->size_bytes < expectedSize ? "Image is too small for this cart" :
 		selected->size_bytes == expectedSize ? "Image size matches this cart" :
 		"Image is larger; trailing data is ignored";
-	fb_draw_path_bar(BOTTOM_SCREEN, detailRow, fb_theme()->secondary,
-		fb_theme()->bg, fullPath);
-	fb_draw_status(BOTTOM_SCREEN, detailRow + 2, compatibility, compatibilityColor,
-		fb_theme()->bg, sizeLine);
-	fb_draw_status(BOTTOM_SCREEN, detailRow + 4, compatibility, compatibilityColor,
-		fb_theme()->bg, compatibilityMessage);
+	fb_draw_path_bar_marquee(fileBrowserTopStaging, detailRow,
+		fb_theme()->secondary, fb_theme()->bg, fullPath, pathMarqueeOffset);
+	fb_draw_status_options(fileBrowserTopStaging, detailRow + 2, compatibility, compatibilityColor,
+		fb_theme()->bg, sizeLine, &prefixFreeStatus);
+	fb_draw_status_options(fileBrowserTopStaging, detailRow + 4, compatibility, compatibilityColor,
+		fb_theme()->bg, compatibilityMessage, &prefixFreeStatus);
 }
 
-void RenderList(const char* currentPath, const fb_file_browser_t& browser,
-	size_t expectedSize) {
-	DrawHeader(TOP_SCREEN, "Pick a file to write");
-
-	const fb_cell_rect_t &content = UiPageRegions().content;
-	// The one-cell margin consumes one of the content region's cells.
-	char pathDisplay[64];
-	const int maxPathChars = std::min(content.cols - 1,
-		static_cast<int>(sizeof(pathDisplay) - 1));
-	int pathLen = strlen(currentPath);
-	if (pathLen > maxPathChars) {
-		snprintf(pathDisplay, sizeof(pathDisplay), "...%s", currentPath + pathLen - (maxPathChars - 3));
-	} else {
-		snprintf(pathDisplay, sizeof(pathDisplay), "%.*s", maxPathChars, currentPath);
+void RenderList(const char* currentPath, const char* cartName,
+	const fb_file_browser_t& browser,
+	size_t expectedSize, unsigned fileMarqueeOffset, bool marqueePaused) {
+	if (!fileBrowserFramesValid) {
+		memset(fileBrowserTopPresented, 0, sizeof(fileBrowserTopPresented));
+		memset(fileBrowserBottomPresented, 0, sizeof(fileBrowserBottomPresented));
+		fileBrowserFramesValid = true;
 	}
-	fb_draw_wrapped_chars(TOP_SCREEN, UiContentX(1), UiContentY(0), fb_theme()->secondary, pathDisplay);
 
+	fb_clear(fileBrowserBottomStaging, fb_theme()->bg);
+	const fb_cell_rect_t &content = UiBottomPageRegions().content;
+	fb_draw_heading(fileBrowserBottomStaging, content.row, FB_HEADING_2,
+		fb_theme()->text, fb_theme()->bg, "Pick a file to write");
+	char position[16];
+	if (browser.list.focus.count == 0) {
+		snprintf(position, sizeof(position), "0/0");
+	} else {
+		snprintf(position, sizeof(position), "%u/%u",
+			browser.list.focus.selected + 1, browser.list.focus.count);
+	}
 	for (unsigned row = 0; row < browser.list.rows; row++) {
 		const unsigned index = browser.list.first + row;
 		if (index >= browser.list.focus.count) { break; }
-		fb_draw_file_browser_row(TOP_SCREEN, UiPageRegions().content.row + 1 + row,
+		fb_draw_file_browser_row_marquee(fileBrowserBottomStaging,
+			UiBottomPageRegions().content.row + 1 + row,
 			fb_theme()->text, fb_theme()->bg, fb_theme()->warn, fb_theme()->bg,
 			&browser.entries[index], index == browser.list.focus.selected,
-			FB_LIST_STYLE_CURSOR);
+			FB_LIST_STYLE_CURSOR,
+			index == browser.list.focus.selected ? fileMarqueeOffset : 0);
 	}
-	fb_list_scrollbar(TOP_SCREEN, FB_WIDTH - 1,
-		(UiPageRegions().content.row + 1) * FB_GLYPH_H, 1,
+	fb_list_scrollbar(fileBrowserBottomStaging, FB_WIDTH - FB_SCROLLBAR_DEFAULT_WIDTH,
+		(UiBottomPageRegions().content.row + 1) * FB_GLYPH_H,
+		FB_SCROLLBAR_DEFAULT_WIDTH,
 		browser.list.rows * FB_GLYPH_H, &browser.list,
 		fb_theme()->secondary, fb_theme()->accent);
 
@@ -192,27 +235,51 @@ void RenderList(const char* currentPath, const fb_file_browser_t& browser,
 		browser.entries[0].kind == FB_FILE_ENTRY_PARENT;
 	const bool hasRealEntries = browser.list.focus.count > (hasParentEntry ? 1u : 0u);
 	if (!hasRealEntries) {
-		fb_draw_wrapped_chars(TOP_SCREEN, UiContentX(1), UiContentY(1 + (hasParentEntry ? 1 : 0)),
+		fb_draw_wrapped_chars(fileBrowserBottomStaging, UiBottomContentX(0),
+			UiBottomContentY(1 + (hasParentEntry ? 1 : 0)),
 			fb_theme()->secondary, "No .bin files in this folder yet.");
 	}
 
-	static const fb_action_t actions[] = {
+	const fb_action_t actions[] = {
 		{ FB_INPUT_A, "Select", nullptr, 0 },
 		{ FB_INPUT_B, "Back", nullptr, 0 },
+		{ FB_INPUT_Y, marqueePaused ? "Resume labels" : "Pause labels", nullptr, 0 },
 	};
-	fb_draw_action_bar(TOP_SCREEN, UiPageRegions().footer.row, fb_theme()->text, fb_theme()->select, actions, sizeof(actions) / sizeof(actions[0]));
-	RenderSelectionContext(currentPath, browser, expectedSize);
+	char actionText[FB_COLS + 1];
+	fb_action_bar_text(actionText, sizeof(actionText), actions,
+		sizeof(actions) / sizeof(actions[0]));
+	fb_banner_options_t footerOptions = fb_banner_options_default();
+	footerOptions.clip = true;
+	footerOptions.inset_cols = 1;
+	fb_draw_banner_slots(fileBrowserBottomStaging, UiTopActionBarRow(),
+		fb_theme()->text, fb_theme()->select, actionText, "", position, &footerOptions);
+	RenderSelectionContext(cartName, currentPath, browser, expectedSize, fileMarqueeOffset);
+	(void)fb_apply_diff(TOP_SCREEN, fileBrowserTopPresented, fileBrowserTopStaging);
+	(void)fb_apply_diff(BOTTOM_SCREEN, fileBrowserBottomPresented, fileBrowserBottomStaging);
 }
 
 } // namespace
 
-bool BrowseForFile(const char* startPath, const char* ext, size_t expectedSize,
+bool BrowseForFile(const char* startPath, const char* ext, const char* cartName,
+	size_t expectedSize,
 	char* outPath, size_t outPathSize) {
+	fileBrowserFramesValid = false;
 	if (mount_fat() != ALL_OK) {
-		fb_draw_wrapped_chars(TOP_SCREEN, UiContentX(1), UiContentY(14), fb_theme()->danger,
-			"Couldn't access the SD card.\nMake sure it's inserted.");
-		fb_draw_wrapped_chars(TOP_SCREEN, UiContentX(1), UiContentY(17), fb_theme()->warn,
-			"Press <B> to go back.");
+		DrawHeaderWithProvenance(TOP_SCREEN, "Cart-Flasher", true);
+		fb_draw_heading(TOP_SCREEN, UiPageRegions().content.row, FB_HEADING_2,
+			fb_theme()->text, fb_theme()->bg, cartName);
+		fb_clear(BOTTOM_SCREEN, fb_theme()->bg);
+		fb_draw_heading(BOTTOM_SCREEN, UiBottomPageRegions().content.row, FB_HEADING_2,
+			fb_theme()->danger, fb_theme()->bg, "SD card unavailable");
+		fb_draw_wrapped_page(BOTTOM_SCREEN, UiBottomContentX(0), UiBottomContentY(2),
+			UiBottomPageRegions().content.cols * FB_GLYPH_W, 4, fb_theme()->danger,
+			"Couldn't access the SD card. Make sure it is inserted.");
+		const fb_action_t actions[] = {
+			{ FB_INPUT_B, "Back", nullptr, 0 },
+		};
+		fb_draw_action_bar(BOTTOM_SCREEN, UiTopActionBarRow(),
+			fb_theme()->text, fb_theme()->select, actions,
+			sizeof(actions) / sizeof(actions[0]));
 		WaitPress(KEY_B);
 		return false;
 	}
@@ -226,18 +293,27 @@ bool BrowseForFile(const char* startPath, const char* ext, size_t expectedSize,
 
 	std::vector<fb_file_entry_t> browserEntries;
 	BuildBrowserEntries(entries, browserEntries);
-	const int visibleCount = UiContentRows() - 1;
+	const int visibleCount = UiBottomContentRows() - 1;
 	fb_file_browser_t browser;
 	fb_file_browser_init(&browser, browserEntries.data(), browserEntries.size(),
 		visibleCount, 0);
 	fb_input_repeat_t browserRepeat = {};
 	bool dirty = true;
 	bool result = false;
+	unsigned fileMarqueeOffset = 0;
+	unsigned marqueeVBlanks = 0;
+	bool marqueePaused = false;
 
 	while (true) {
 		swiWaitForVBlank();
+		if (!marqueePaused && ++marqueeVBlanks == 12) {
+			marqueeVBlanks = 0;
+			fileMarqueeOffset++;
+			dirty = true;
+		}
 		if (dirty) {
-			RenderList(currentPath, browser, expectedSize);
+			RenderList(currentPath, cartName, browser, expectedSize, fileMarqueeOffset,
+				marqueePaused);
 			dirty = false;
 		}
 
@@ -247,11 +323,22 @@ bool BrowseForFile(const char* startPath, const char* ext, size_t expectedSize,
 		const fb_input_t heldDirection = heldKeys & KEY_DOWN ? FB_INPUT_DOWN :
 			heldKeys & KEY_UP ? FB_INPUT_UP : 0;
 
+		if (keys & KEY_Y) {
+			marqueePaused = !marqueePaused;
+			dirty = true;
+		}
+
 		if (fb_input_repeat_update(&browserRepeat, heldDirection, 12, 3)) {
+			bool moved = false;
 			if (heldDirection == FB_INPUT_DOWN) {
-				dirty |= fb_file_browser_move(&browser, 1);
+				moved = fb_file_browser_move(&browser, 1);
 			} else if (heldDirection == FB_INPUT_UP) {
-				dirty |= fb_file_browser_move(&browser, -1);
+				moved = fb_file_browser_move(&browser, -1);
+			}
+			if (moved) {
+				fileMarqueeOffset = 0;
+				marqueeVBlanks = 0;
+				dirty = true;
 			}
 		}
 		if (keys & KEY_B) {
@@ -264,6 +351,8 @@ bool BrowseForFile(const char* startPath, const char* ext, size_t expectedSize,
 			BuildBrowserEntries(entries, browserEntries);
 			fb_file_browser_init(&browser, browserEntries.data(), browserEntries.size(),
 				visibleCount, 0);
+			fileMarqueeOffset = 0;
+			marqueeVBlanks = 0;
 			dirty = true;
 		}
 		if (keys & KEY_A && browser.list.focus.count != 0) {
@@ -275,27 +364,43 @@ bool BrowseForFile(const char* startPath, const char* ext, size_t expectedSize,
 				BuildBrowserEntries(entries, browserEntries);
 				fb_file_browser_init(&browser, browserEntries.data(), browserEntries.size(),
 					visibleCount, 0);
+				fileMarqueeOffset = 0;
+				marqueeVBlanks = 0;
 				dirty = true;
 				break;
 			}
 
 			case FB_FILE_BROWSER_ENTER_DIRECTORY: {
 				char newPath[512];
-				PathJoin(newPath, sizeof(newPath), currentPath, selected->name);
+				if (!PathJoin(newPath, sizeof(newPath), currentPath, selected->name)) {
+					flashcart_core::platform::logMessage(flashcart_core::LOG_ERR,
+						"filebrowser: cannot enter path too long: %s", selected->name);
+					dirty = true;
+					break;
+				}
 				strncpy(currentPath, newPath, sizeof(currentPath) - 1);
 				currentPath[sizeof(currentPath) - 1] = '\0';
 				ListDirectory(currentPath, ext, entries);
 				BuildBrowserEntries(entries, browserEntries);
 				fb_file_browser_init(&browser, browserEntries.data(), browserEntries.size(),
 					visibleCount, 0);
+				fileMarqueeOffset = 0;
+				marqueeVBlanks = 0;
 				dirty = true;
 				break;
 			}
 
 			case FB_FILE_BROWSER_OPEN_FILE: {
 				char fullPath[512];
-				PathJoin(fullPath, sizeof(fullPath), currentPath, selected->name);
-				snprintf(outPath, outPathSize, "%s", fullPath);
+				if (!PathJoin(fullPath, sizeof(fullPath), currentPath, selected->name) ||
+					strlen(fullPath) >= outPathSize) {
+					flashcart_core::platform::logMessage(flashcart_core::LOG_ERR,
+						"filebrowser: selected path does not fit output buffer: %s",
+						selected->name);
+					dirty = true;
+					break;
+				}
+				memcpy(outPath, fullPath, strlen(fullPath) + 1);
 				result = true;
 				break;
 			}
