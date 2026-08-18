@@ -18,6 +18,8 @@ jobs:
     steps:
       - name: Checkout repo
         uses: actions/checkout@v7.0.1
+        with:
+          submodules: recursive
       - name: Build app
         id: build
         # NDS_OUT is fixed so every release carries an identically-named asset,
