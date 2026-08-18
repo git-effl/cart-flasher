@@ -19,7 +19,23 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v7.0.1
         with:
-          submodules: recursive
+          submodules: false
+      - name: Checkout private NDS-FB submodule
+        run: |
+          apt-get update
+          apt-get install --yes --no-install-recommends openssh-client
+          rm -rf /var/lib/apt/lists/*
+          install -d -m 700 "$HOME/.ssh"
+          printf '%s\n' "${{ secrets.NDS_FB_DEPLOY_KEY }}" > "$HOME/.ssh/nds_fb"
+          chmod 600 "$HOME/.ssh/nds_fb"
+          trap 'rm -f "$HOME/.ssh/nds_fb"' EXIT
+          printf '%s\n' \
+            'github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl' \
+            > "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/known_hosts"
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          GIT_SSH_COMMAND="ssh -i $HOME/.ssh/nds_fb -o IdentitiesOnly=yes -o UserKnownHostsFile=$HOME/.ssh/known_hosts -o StrictHostKeyChecking=yes" \
+            git submodule update --init --depth=1 --recursive
       - name: Build app
         id: build
         # NDS_OUT is fixed so every release carries an identically-named asset,
