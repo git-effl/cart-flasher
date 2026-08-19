@@ -23,3 +23,10 @@ commit `03d464c` (tag `v1.1.0`). Changes by `@tasken`:
   use is `BIT(0)`..`BIT(7)` on `uint8_t`, where signed and unsigned agree.
 - 2026-08-01 -- `devices/r4isdhchk.cpp`: removed an unused ntrboot buffer-size
   local. This is a build-only warning fix with no executable-code change.
+- 2026-08-18 -- `devices/ak2i.cpp`: `getMaxLength()` returns 2MB for HW-81,
+  not 16MB. The chip is an SST 39VF1681, which is 16 megabit -- someone read
+  that as megabytes. Dumps were 8x too big and a correctly trimmed 2MB image
+  was rejected outright, so restores were unreliable
+  ([ntrteam/flashcart_core#144](https://github.com/ntrteam/flashcart_core/issues/144),
+  unanswered upstream). Old 16MB backups still restore fine. Untested on real
+  HW-81 hardware.

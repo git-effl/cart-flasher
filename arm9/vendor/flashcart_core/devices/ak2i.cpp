@@ -110,7 +110,12 @@ public:
     size_t getMaxLength()
     {
         if (m_ak2i_hwrevision == 0x44444444) return 0x200000;
-        if (m_ak2i_hwrevision == 0x81818181) return 0x1000000;
+        // HW-81 has an SST 39VF1681: 16 *megabit*, so 2MB, not the 16MB this
+        // used to return (see ak2i_cmdSetFlash1681_81 -- the part was always
+        // named right here). Only hit backup/restore, since ntrboot injection
+        // never writes past 2MB. writeFlash() doesn't compare before writing,
+        // so the extra 14MB just erased and rewrote the same 2MB over and over.
+        if (m_ak2i_hwrevision == 0x81818181) return 0x200000;
         return 0x0;
     }
 
