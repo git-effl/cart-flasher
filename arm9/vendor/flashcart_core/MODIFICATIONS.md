@@ -28,5 +28,6 @@ commit `03d464c` (tag `v1.1.0`). Changes by `@tasken`:
   that as megabytes. Dumps were 8x too big and a correctly trimmed 2MB image
   was rejected outright, so restores were unreliable
   ([ntrteam/flashcart_core#144](https://github.com/ntrteam/flashcart_core/issues/144),
-  unanswered upstream). Old 16MB backups still restore fine. Untested on real
-  HW-81 hardware.
+  unanswered upstream). Old 16MB backups still restore fine. Confirmed on real
+  HW-81 hardware by the reporter: a restore of differing contents now works in
+  one pass, where 16MB flashes had needed repeating.
