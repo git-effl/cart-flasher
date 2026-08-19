@@ -63,7 +63,8 @@ $(NDS_OUT) : arm9 arm7
 	$(V)$(BLOCKSDS)/tools/ndstool/ndstool -c $@ \
 		-7 $(ARM7DIR)/$(TARGET).elf -9 $(ARM9DIR)/$(TARGET).elf \
 		-b $(GAME_ICON) "$(GAME_FULL_TITLE)"
-	@branch=$$(git symbolic-ref --short -q HEAD || echo detached); \
+	@branch=$$(git symbolic-ref --short -q HEAD \
+		|| printf '%s' "$${GITHUB_REF_NAME:-detached}"); \
 	printf '%s\n' \
 		'=== Build summary ===' \
 		'  ROM     $(NDS_OUT)' \
