@@ -49,4 +49,9 @@ jobs:
         if: github.event_name == 'release'
         env:
           GH_TOKEN: ${{ github.token }}
+          # Without this gh shells out to git to work out which repo it is in,
+          # and the container's UID doesn't own the workspace, so git refuses
+          # it as "dubious ownership" and the upload fails after a successful
+          # build. Naming the repo skips that lookup entirely.
+          GH_REPO: ${{ github.repository }}
         run: gh release upload "${{ github.event.release.tag_name }}" cart_flasher.nds --clobber
