@@ -8,7 +8,7 @@ A DS/DSi homebrew application to backup and restore raw flash images to/from Slo
 
 ## Getting started
 
-Download the latest [`cart_flasher.nds`](https://github.com/tasken/Cart-Flasher/releases/latest/download/cart_flasher.nds) and place it on your flashcart's SD card.
+Download the latest [`cart_flasher.nds`](https://github.com/tasken/cart-flasher/releases/latest/download/cart_flasher.nds) and place it on your flashcart's SD card.
 
 1. Boot into your flashcart menu, and launch Cart-Flasher.
 1. Accept the warning by pressing `A`.
@@ -53,12 +53,14 @@ Ace3DS+, Acekard 2i, DSTT, R4i Gold 3DS, R4iSDHC family, and R4 SDHC Dual-Core (
 ## Building
 
 ```shell
-git clone https://github.com/tasken/Cart-Flasher.git
-cd Cart-Flasher/
+git clone https://github.com/tasken/cart-flasher.git
+cd cart-flasher/
 sudo ./build.sh
 ```
 
-This builds inside Docker (BlocksDS toolchain included) and produces `cart_flasher-<commit>.nds`. If you already have BlocksDS installed locally, `make` works directly without Docker.
+This builds inside Docker (BlocksDS toolchain included) and produces `cart_flasher-dev.nds`.
+Nightlies are `cart_flasher-nightly-<commit>.nds`; releases are `cart_flasher.nds`. If you already
+have BlocksDS installed locally, `make` works directly without Docker.
 
 ## Credits
 
