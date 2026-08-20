@@ -2,7 +2,7 @@
 // Action Replay DSi Media Edition.
 //
 // The Datel protocols use AUXSPI transactions with data-dependent toggle-bit
-// polling. Ported from ApacheThunder's datelTool (GPL-3.0), see
+// polling. Ported from ApacheThunder and edo9300's GPL-3.0 datelTool; see
 // ../MODIFICATIONS.md.
 
 #include <algorithm>

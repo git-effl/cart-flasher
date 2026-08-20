@@ -73,8 +73,12 @@ have BlocksDS installed locally, `make` works directly without Docker.
 *   Drivers & core:
     *   [flashcart_core](https://github.com/ntrteam/flashcart_core) by `ntrteam`, for the per-flashcart device drivers
     *   [libncgc](https://github.com/angelsl/libncgc) by `angelsl`, for the NTR/CTR card protocol layer
+    *   [datelTool](https://github.com/ApacheThunder/datelTool) by `ApacheThunder`, for Datel
+        cart support; AUXSPI protocol logic by `edo9300`
 
-Special thanks to `Sanras` for feedback and pre-release testing, and make sure to check out his [flashcart guide](https://sanrax.github.io/flashcart-guides/).
+Special thanks to `Sanras` for feedback and pre-release testing, and
+`ApacheThunder` for Datel hardware testing. Make sure to check out Sanras's
+[flashcart guide](https://sanrax.github.io/flashcart-guides/).
 
 The key combo confirmation before writing to a cart is styled after `d0k3`'s [GodMode9](https://github.com/d0k3/GodMode9) unlock sequence prompt.
 
