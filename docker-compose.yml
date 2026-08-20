@@ -1,6 +1,9 @@
 services:
   builder:
     build: .
+    # make clean && make use only the bind-mounted checkout and installed
+    # toolchain. Keep the build container off Docker's default network.
+    network_mode: none
     volumes:
       - .:/work
     command: sh -c "make clean && make"

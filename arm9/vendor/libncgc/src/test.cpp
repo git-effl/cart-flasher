@@ -55,6 +55,10 @@ c::ncgc_err_t platformSpiTransact(c::ncgc_ncard_t *card, std::uint8_t bin, std::
     return c::NCGC_EOK;
 }
 
+void platformSpiEnd(c::ncgc_ncard_t *card) {
+    static_cast<void>(card);
+}
+
 extern "C" int cxxtest() {
     c::ncgc_nplatform_t& p = card.rawState().platform;
     p.hw_key2 = true;
@@ -65,6 +69,7 @@ extern "C" int cxxtest() {
     p.send_command = platformSendCommand;
     p.send_write_command = platformSendWriteCommand;
     p.spi_transact = platformSpiTransact;
+    p.spi_end = platformSpiEnd;
 
     Err e;
 
@@ -72,6 +77,12 @@ extern "C" int cxxtest() {
     e = card.beginKey1();
     e = card.beginKey2();
     e = card.sendCommand(0xDEAD, nullptr, 0, NTRFlags().preDelay(0x910));
+    std::uint8_t response = 0;
+    e = card.sendSpiByte(0xA5, &response, false);
+    if (e) {
+        return e.errNo();
+    }
+    card.endSpiTransaction();
 
     return 0;
 }

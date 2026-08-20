@@ -51,4 +51,8 @@ rm -f "$BUILD_LOG"
 # .:/work (obj/, out/, .elf/.nds outputs) ends up root-owned on the host --
 # blocking any later non-sudo command (e.g. the host-side PLATFORM=test build)
 # from touching those files without another sudo call.
+# The Compose service uses `network_mode: none`: make only needs the
+# bind-mounted checkout and installed toolchain, so the runtime build must not
+# create or join Docker's default network. The image build remains allowed to
+# reach the package repository for Dockerfile's wf-pacman refresh.
 sudo docker compose run --rm --build --user "$BUILD_UID:$BUILD_GID" builder sh -c "$CMD" 2>&1 | tee "$BUILD_LOG"

@@ -31,7 +31,7 @@
 extern const char _binary_ntr_blowfish_bin_start;
 
 enum op_type {
-    COMMAND, DELAY, RESET, SEED_KEY2
+    COMMAND, DELAY, RESET, SEED_KEY2, SPI, SPI_END
 };
 
 const char *op_type_str(enum op_type op_type) {
@@ -44,6 +44,10 @@ const char *op_type_str(enum op_type op_type) {
             return "RESET";
         case SEED_KEY2:
             return "SEED_KEY2";
+        case SPI:
+            return "SPI";
+        case SPI_END:
+            return "SPI_END";
         default:
             return "UNKNOWN";
     }
@@ -52,6 +56,8 @@ const char *op_type_str(enum op_type op_type) {
 struct op {
     size_t index;
     enum op_type op_type;
+    uint8_t spi_in;
+    bool spi_last;
     union {
         struct {
             uint64_t cmd;
@@ -112,6 +118,12 @@ struct op ops[] = {
     }, { /* cur_op = 14 */
         .op_type = COMMAND,
         .command = { .cmd = 0xB700000600000000ull, .size = 0x200, .flags = 0x416657 }
+    }, { /* cur_op = 15 */
+        .op_type = SPI,
+        .spi_in = 0x5A,
+        .spi_last = false
+    }, { /* cur_op = 16 */
+        .op_type = SPI_END
     }
 };
 const size_t n_ops = sizeof(ops)/sizeof(struct op);
@@ -214,8 +226,25 @@ static ncgc_err_t send_write_command(ncgc_ncard_t *const card, const uint64_t cm
 }
 
 static ncgc_err_t spi_transact(ncgc_ncard_t *const card, uint8_t in, uint8_t *out, bool last) {
-    (void)card; (void)in; (void)out; (void)last;
+    (void)card;
+    struct op *op = next_op(SPI);
+    if (!op) {
+        return NCGC_EOK;
+    }
+    if (op->spi_in != in || op->spi_last != last) {
+        fprintf(stderr, "FAIL: SPI (%zu) expected in=%02X last=%d, actual in=%02X last=%d\n",
+            op->index, op->spi_in, op->spi_last, in, last);
+        failed = true;
+    }
+    if (out) {
+        *out = 0xA5;
+    }
     return NCGC_EOK;
+}
+
+static void spi_end(ncgc_ncard_t *const card) {
+    (void)card;
+    next_op(SPI_END);
 }
 
 static void io_delay(uint32_t delay) {
@@ -286,6 +315,7 @@ static ncgc_ncard_t card = {
         .send_command = send_command,
         .send_write_command = send_write_command,
         .spi_transact = spi_transact,
+        .spi_end = spi_end,
         .io_delay = io_delay,
         .seed_key2 = seed_key2,
         .hw_key2 = true,
@@ -294,6 +324,21 @@ static ncgc_ncard_t card = {
 };
 
 extern int cxxtest(void);
+
+static bool test_spi_transact(void) {
+    uint8_t got = 0;
+    ncgc_err_t r = ncgc_nspi_transact(&card, 0x5A, &got, false);
+    if (r) {
+        fprintf(stderr, "FAIL: ncgc_nspi_transact = %d\n", r);
+        return false;
+    }
+    if (got != 0xA5) {
+        fprintf(stderr, "FAIL: ncgc_nspi_transact response = %02X\n", got);
+        return false;
+    }
+    ncgc_nspi_end(&card);
+    return true;
+}
 
 int main() {
     ncgc_err_t r;
@@ -317,6 +362,13 @@ int main() {
     char buf[1642];
     if ((r = ncgc_nread_data(&card, 117, buf, sizeof(buf)))) {
         fprintf(stderr, "FAIL: ncgc_nread_data = %d (%s)\n", r, ncgc_err_desc(r));
+        failed = true;
+    }
+    if (!test_spi_transact()) {
+        failed = true;
+    }
+    if (cur_op != n_ops) {
+        fprintf(stderr, "FAIL: expected %zu operations, ran %zu\n", n_ops, cur_op);
         failed = true;
     }
     #ifdef PRINT

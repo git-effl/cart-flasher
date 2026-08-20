@@ -31,3 +31,20 @@ commit `03d464c` (tag `v1.1.0`). Changes by `@tasken`:
   unanswered upstream). Old 16MB backups still restore fine. Confirmed on real
   HW-81 hardware by the reporter: a restore of differing contents now works in
   one pass, where 16MB flashes had needed repeating.
+- 2026-08-19 -- `devices/datel.cpp`: added a Datel Slot-1 driver, ported from
+  ApacheThunder and edo9300's GPL-3.0 datelTool. The driver uses AUXSPI
+  transactions, compares each erase block before touching it, and verifies
+  every programmed block by readback. EN29LV parts remain detection-only until
+  their boot-block geometry is confirmed.
+- 2026-08-19 -- `devices/datel.cpp`: SST39VF1681 is capped to 1 MiB. A
+  read-only 2 MiB probe on ApacheThunder's Action Replay DS produced two
+  byte-identical 1 MiB halves, confirming that this ASIC mirrors the physical
+  chip's second MiB. The first MiB is now the supported backup/restore range.
+- 2026-08-19 -- `devices/datel.cpp`: moved per-4 KiB read trace lines to
+  DEBUG. Write verification deliberately rereads each changed block; logging
+  those internal reads at INFO reopened the FAT log for every block and made
+  restores needlessly slow.
+- 2026-08-19 -- `devices/datel.cpp`: aligned driver-side write progress with
+  StreamFlash's absolute `Writing flash` progress. The driver had been drawing
+  a block-relative `Writing` indicator while StreamFlash alternated it with
+  its chunk-relative label, producing visible bottom-screen flicker.

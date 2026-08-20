@@ -249,6 +249,11 @@ static return_codes_t StreamFlash(flashcart_core::Flashcart* cart, const char* f
 	DrawRectangle(TOP_SCREEN, 0, 2 * FONT_HEIGHT, SCREEN_WIDTH, SCREEN_HEIGHT - 2 * FONT_HEIGHT, COLOR_BLACK);
 
 	if (mount_fat() != ALL_OK) { return FAT_MOUNT_FAILED; }
+	if (Flash_size == 0) {
+		flashcart_core::platform::logMessage(flashcart_core::LOG_ERR,
+			"StreamFlash: cart has no restore-supported flash capacity");
+		return FLASH_OP_FAILED;
+	}
 
 	// Allocated before fopen(), not after: for isRead (DumpFlash), the fopen()
 	// below uses "wb", which truncates any pre-existing backup file the moment

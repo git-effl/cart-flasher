@@ -206,6 +206,14 @@ public:
         return c::ncgc_nspi_command(&_card, command, command_length, response, response_length);
     }
 
+    inline __ncgc_must_check Err sendSpiByte(const uint8_t in, uint8_t *const out, const bool last) {
+        return c::ncgc_nspi_transact(&_card, in, out, last);
+    }
+
+    inline void endSpiTransaction() {
+        c::ncgc_nspi_end(&_card);
+    }
+
     inline NTRState state() {
         return static_cast<NTRState>(_card.state);
     }

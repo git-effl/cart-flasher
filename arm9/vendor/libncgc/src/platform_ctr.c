@@ -95,6 +95,7 @@ void ncgc_nplatform_ctr_init(ncgc_ncard_t *card) {
         .send_command = send_command,
         .send_write_command = send_write_command,
         .spi_transact = spi_transact,
+        .spi_end = spi_end,
         .io_delay = ncgc_platform_ctr_delay,
         .seed_key2 = seed_key2,
         .hw_key2 = true,

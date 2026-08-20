@@ -73,6 +73,11 @@ typedef struct ncgc_nplatform {
     /// Returns `NCGC_EOK` on success, or an appropriate error on failure.
     ncgc_err_t __ncgc_must_check (*spi_transact)(struct ncgc_ncard *card, uint8_t in, uint8_t *out, bool last);
 
+    /// Releases SPI CS without clocking another byte.
+    ///
+    /// Only valid after a call to `spi_transact` with `last` unset.
+    void (*spi_end)(struct ncgc_ncard *card);
+
     void (*io_delay)(uint32_t delay);
 
     /// Sets the KEY2 registers.
@@ -293,6 +298,17 @@ inline ncgc_err_t __ncgc_must_check ncgc_nsend_write_command_as_is(ncgc_ncard_t 
                                                     const size_t size, ncgc_nflags_t flags) {
     return card->platform.send_write_command(card, command, buf, size, flags);
 }
+
+/// Sends one SPI byte `in`, storing the response in `out` if it is not NULL.
+///
+/// `last` releases SPI CS after this byte. Use `ncgc_nspi_end()` to release CS
+/// without another transfer after a non-final byte.
+ncgc_err_t __ncgc_must_check ncgc_nspi_transact(ncgc_ncard_t *card, uint8_t in, uint8_t *out, bool last);
+
+/// Releases SPI CS without clocking another byte.
+///
+/// Only valid after `ncgc_nspi_transact()` with `last` unset.
+void ncgc_nspi_end(ncgc_ncard_t *card);
 
 /// Sends an SPI command `command` of length `command_length`, then receives a response of length `response_length`
 /// into `response`, if `response` is not NULL.

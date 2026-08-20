@@ -22,7 +22,9 @@ Download the latest [`cart_flasher.nds`](https://github.com/tasken/cart-flasher/
 
 ## Supported carts
 
-Ace3DS+, Acekard 2i, DSTT, R4i Gold 3DS, R4iSDHC family, and R4 SDHC Dual-Core (DSi mode only).
+Ace3DS+, Acekard 2i, DSTT, R4i Gold 3DS, R4iSDHC family, R4 SDHC Dual-Core
+(DSi mode only), and Datel carts (Games N' Music, Max Media Player, Action
+Replay DS).
 
 `Sanras`'s [flashcart guide](https://sanrax.github.io/flashcart-guides/) covers which retail carts these map to, and has a full walkthrough for [changing a flashcart's banner](https://sanrax.github.io/flashcart-guides/tutorials/icon-change/) using this tool.
 

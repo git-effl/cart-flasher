@@ -296,6 +296,15 @@ ncgc_err_t ncgc_nread_data(ncgc_ncard_t *const card, const uint32_t address, voi
     return NCGC_EOK;
 }
 
+ncgc_err_t __ncgc_must_check ncgc_nspi_transact(ncgc_ncard_t *const card, const uint8_t in,
+                                            uint8_t *const out, const bool last) {
+    return P(card).spi_transact(card, in, out, last);
+}
+
+void ncgc_nspi_end(ncgc_ncard_t *const card) {
+    P(card).spi_end(card);
+}
+
 ncgc_err_t __ncgc_must_check ncgc_nspi_command(ncgc_ncard_t *const card, const uint8_t *const command, const size_t command_length,
                                             uint8_t *const response, const size_t response_length) {
     size_t ctr;

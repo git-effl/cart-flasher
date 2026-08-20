@@ -139,9 +139,18 @@ inline static void io_delay(uint32_t delay) {
     );
 }
 
-static ncgc_err_t spi_transact(ncgc_ncard_t *const card, uint8_t in, uint8_t *out, bool last) {
+static void spi_end(ncgc_ncard_t *const card) {
     (void)card;
-    REG_MCNT = MCNT_CR1_ENABLE | MCNT_MODE_SPI | (last ? 0 : MCNT_SPI_CS);
+    io_delay(0x64);
+    REG_MCNT = MCNT_SPI_CS;
+    io_delay(0x1F4);
+}
+
+static ncgc_err_t spi_transact(ncgc_ncard_t *const card, uint8_t in, uint8_t *out, bool last) {
+    // datelTool keeps CS asserted through the response register read, then
+    // drops enable while retaining HOLD. Match that transaction shape for the
+    // Action Replay ASIC instead of releasing CS on the final clock edge.
+    REG_MCNT = MCNT_CR1_ENABLE | MCNT_MODE_SPI | MCNT_SPI_CS;
     REG_MDATA = in;
     while (REG_MCNT & MCNT_SPI_BUSY);
     uint8_t data = REG_MDATA;
@@ -149,9 +158,7 @@ static ncgc_err_t spi_transact(ncgc_ncard_t *const card, uint8_t in, uint8_t *ou
         *out = data;
     }
     if (last) {
-        io_delay(0x64);
-        REG_MCNT = 0;
-        io_delay(0x1F4);
+        spi_end(card);
     }
     return NCGC_EOK;
 }
