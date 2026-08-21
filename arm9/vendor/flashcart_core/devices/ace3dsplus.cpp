@@ -13,7 +13,31 @@ namespace flashcart_core {
 using platform::logMessage;
 using platform::showProgress;
 
+struct Ace3DSRecoveryProfile {
+    const char *name;
+    const char *shortName;
+    const char *description;
+    uint32_t gameCode;
+    uint32_t key1Romcnt;
+    uint32_t key2Romcnt;
+    uint8_t seedByte;
+    uint8_t expectedFlashCapacity;
+};
+
+const Ace3DSRecoveryProfile r4iSdhcHkDualCore2021Adle = {
+    "R4iSDHC.hk Dual Core 2021 (ADLE recovery)",
+    "r4isdhc-hk-adle-recovery",
+    "Known 2 MiB ADLE stock profile.\nBack up first; restore only a verified image.",
+    0x454C4441u,
+    0x001808F8u,
+    0x00416017u,
+    0x00,
+    0x15,
+};
+
 class Ace3DSPlus : Flashcart {
+    const Ace3DSRecoveryProfile *m_recoveryProfile;
+
     /// Gets the cart version (in the high halfword) and status (in the low byte).
     bool cmdVersionStatus(uint32_t *resp) {
         ncgc::Err r = m_card->sendCommand(0xB0, resp, 4, 0x180000);
@@ -290,9 +314,19 @@ class Ace3DSPlus : Flashcart {
         }
 
         ncgc::c::ncgc_ncard_t& state = m_card->rawState();
-        state.hdr.key1_romcnt = state.key1.romcnt = 0x1808F8;
-        state.hdr.key2_romcnt = state.key2.romcnt = 0x416017;
-        state.key2.seed_byte = 0;
+        if (m_recoveryProfile) {
+            logMessage(LOG_NOTICE,
+                "Ace3DSPlus recovery: header game code %08lX; forcing ADLE profile",
+                static_cast<unsigned long>(state.hdr.game_code));
+            state.hdr.game_code = m_recoveryProfile->gameCode;
+            state.hdr.key1_romcnt = state.key1.romcnt = m_recoveryProfile->key1Romcnt;
+            state.hdr.key2_romcnt = state.key2.romcnt = m_recoveryProfile->key2Romcnt;
+            state.key2.seed_byte = m_recoveryProfile->seedByte;
+        } else {
+            state.hdr.key1_romcnt = state.key1.romcnt = 0x1808F8;
+            state.hdr.key2_romcnt = state.key2.romcnt = 0x416017;
+            state.key2.seed_byte = 0;
+        }
         m_card->setBlowfishState(platform::getBlowfishKey(key), key != BlowfishKey::NTR);
 
         if ((err = m_card->beginKey1())) {
@@ -434,7 +468,9 @@ class Ace3DSPlus : Flashcart {
     using Util = FlashUtil<Ace3DSPlus, 0, &Ace3DSPlus::spiRead, 12, &Ace3DSPlus::flashUtilErase, 8, &Ace3DSPlus::flashUtilPageProgram>;
 
 public:
-    Ace3DSPlus() : Flashcart("Ace3DS+", "Ace3DSPlus", 0x200000) { }
+    Ace3DSPlus()
+        : Flashcart("Ace3DS+", "Ace3DSPlus", 0x200000),
+          m_recoveryProfile(nullptr) { }
 
     const char* getAuthor() {
         return "ntrteam, et al.";
@@ -447,6 +483,33 @@ public:
             " * r4isdhc.com.cn\n"
             " * Certain Gateway Blue cards\n"
             " * Clones with sleeping flash (Macronix)";
+    }
+
+    bool hasRecoveryProfile() const override {
+        return true;
+    }
+
+    bool initializeRecovery(ncgc::NTRCard *card) override {
+        m_card = card;
+        m_recoveryProfile = &r4iSdhcHkDualCore2021Adle;
+        const ncgc::Err reset = m_card->init();
+        if (reset && !reset.unsupported()) {
+            logMessage(LOG_ERR, "Ace3DSPlus recovery: raw reset failed: %d", reset.errNo());
+            m_recoveryProfile = nullptr;
+            return false;
+        }
+        if (m_card->state() != ncgc::NTRState::Raw) {
+            logMessage(LOG_ERR, "Ace3DSPlus recovery: expected RAW state, got %d",
+                static_cast<int>(m_card->state()));
+            m_recoveryProfile = nullptr;
+            return false;
+        }
+
+        const bool initialized = initialize();
+        if (!initialized) {
+            m_recoveryProfile = nullptr;
+        }
+        return initialized;
     }
 
     bool initialize() {
@@ -502,7 +565,16 @@ public:
             return false;
         }
 
-        switch ((rdid & 0xFF0000) >> 16) {
+        const uint8_t flashCapacity = (rdid & 0xFF0000) >> 16;
+        if (m_recoveryProfile && flashCapacity != m_recoveryProfile->expectedFlashCapacity) {
+            logMessage(LOG_ERR,
+                "Ace3DSPlus recovery: expected RDID capacity code %02X, got %06lX",
+                static_cast<unsigned>(m_recoveryProfile->expectedFlashCapacity),
+                static_cast<unsigned long>(rdid));
+            return false;
+        }
+
+        switch (flashCapacity) {
             case 0x14:
             case 0x15:
             case 0x16:
@@ -528,6 +600,13 @@ public:
     }
 
     bool injectNtrBoot(uint8_t *blowfish_key, uint8_t *firm, uint32_t firm_size) {
+        if (m_recoveryProfile) {
+            (void)blowfish_key;
+            (void)firm;
+            (void)firm_size;
+            logMessage(LOG_ERR, "Ace3DSPlus recovery: ntrboot injection is disabled");
+            return false;
+        }
         if (firm_size > 0x1F5200 /* 0x200000 - 0xAE00 */) {
             logMessage(LOG_NOTICE, "FIRM too big; maximum size is 2052608 bytes");
             return false;
@@ -585,6 +664,11 @@ public:
             && Util::write(this, 0xAE00, firm_size, firm, true, "Writing FIRM");
         std::free(configPage);
         return result;
+    }
+
+protected:
+    void prepareNormalInitialization() override {
+        m_recoveryProfile = nullptr;
     }
 };
 

@@ -33,7 +33,13 @@ public:
 
     inline bool initialize(ncgc::NTRCard *card) {
         m_card = card;
+        prepareNormalInitialization();
         return initialize();
+    }
+    virtual bool hasRecoveryProfile() const { return false; }
+    virtual bool initializeRecovery(ncgc::NTRCard *card) {
+        (void)card;
+        return false;
     }
     virtual void shutdown() = 0;
 
@@ -53,6 +59,7 @@ protected:
     const size_t m_max_length;
     ncgc::NTRCard *m_card;
 
+    virtual void prepareNormalInitialization() {}
     virtual bool initialize() = 0;
 };
 

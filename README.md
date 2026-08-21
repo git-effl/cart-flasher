@@ -90,3 +90,8 @@ Copyright © the original `ntrboot_flasher_nds` authors and later contributors
 (see Credits above, and the git history for per-change authorship). The vendored
 `flashcart_core` and `libncgc` are also GPL-3.0, under their own `LICENSE` and
 `MODIFICATIONS.md`.
+> [!NOTE]
+> If normal Ace3DS+ detection fails, `Try recovery header` offers the known 2
+> MiB R4iSDHC.hk Dual Core 2021 stock profile. It verifies the Deep Labyrinth
+> recovery header and `RDID 1540EF` before enabling backup or restore. Back up
+> first and restore only a verified image.

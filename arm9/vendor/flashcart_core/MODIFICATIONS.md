@@ -48,3 +48,10 @@ commit `03d464c` (tag `v1.1.0`). Changes by `@tasken`:
   StreamFlash's absolute `Writing flash` progress. The driver had been drawing
   a block-relative `Writing` indicator while StreamFlash alternated it with
   its chunk-relative label, producing visible bottom-screen flicker.
+- 2026-08-21 -- `devices/ace3dsplus.cpp`: added a recovery profile for the
+  known shared 2 MiB R4iSDHC.hk Dual Core 2021 stock image. The archived image
+  and real recovered cart both use `DEEPLABYRINT` / `ADLE` / `EB`,
+  NTR-derived Blowfish state, seed `0x00`, Key1 ROMCNT `0x001808F8`, Key2
+  ROMCNT `0x00416017`, and `RDID 1540EF`. The profile rejects any other flash
+  capacity and disables ntrboot injection; backup and restore stay behind the
+  ordinary write combo.

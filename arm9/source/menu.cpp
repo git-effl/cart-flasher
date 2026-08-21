@@ -86,6 +86,20 @@ static bool WaitConfirm(void) {
 	}
 }
 
+static bool ConfirmRecoveryHeader(void) {
+	DrawHeader(TOP_SCREEN, "Recovery header");
+	DrawString(TOP_SCREEN, FONT_WIDTH, 3 * FONT_HEIGHT, COLOR_WHITE,
+		"Try the known Deep Labyrinth\n"
+		"recovery header?\n\n"
+		"Only for 2 MiB R4iSDHC.hk\n"
+		"Dual Core 2021 carts.\n\n"
+		"No changes are made until\n"
+		"Write flash is selected.");
+	DrawStringCentered(TOP_SCREEN, 14 * FONT_HEIGHT, COLOR_YELLOW,
+		"<A> Try recovery header   <B> Back");
+	return WaitConfirm();
+}
+
 bool ntrCardReset()
 {
 	if (isDSiMode())
@@ -224,12 +238,25 @@ void menu_lvl1(Flashcart* cart)
 				// to inherit there.
 				card.state(NTRState::Key2);
 			}
-			if (!cart->initialize(&card)) //If cart initialization fails, do all this and then break to main menu
+			bool initialized = cart->initialize(&card);
+			if (!initialized && cart->hasRecoveryProfile()) {
+				if (!ConfirmRecoveryHeader()) {
+					DrawHeader(TOP_SCREEN, "Choose your flashcart");
+					DrawFooter(global_loglevel);
+					reprintFlag = true;
+					continue;
+				}
+
+				DrawHeader(TOP_SCREEN, "Choose your flashcart");
+				DrawStringF(TOP_SCREEN, FONT_WIDTH, errorRow * FONT_HEIGHT, COLOR_WHITE,
+					"Trying recovery header for %s...", cart->getName());
+				initialized = cart->initializeRecovery(&card);
+			}
+
+			if (!initialized) //If cart initialization fails, do all this and then break to main menu
 			{
-				// Overwrites the "Detecting..." line above -- blanked first since
-				// the error's own first line isn't guaranteed longer than every
-				// possible "Detecting <cart name>..." line.
-				DrawRectangle(TOP_SCREEN, 0, errorRow * FONT_HEIGHT, SCREEN_WIDTH, FONT_HEIGHT, COLOR_BLACK);
+				ClearScreen(TOP_SCREEN, COLOR_BLACK);
+				DrawHeader(TOP_SCREEN, "Choose your flashcart");
 				// Message and "press <B>" instruction split, matching every
 				// error case in menu_lvl2's switch below.
 				DrawString(TOP_SCREEN, FONT_WIDTH, errorRow * FONT_HEIGHT, COLOR_RED,
