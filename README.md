@@ -26,6 +26,12 @@ Ace3DS+, Acekard 2i, DSTT, R4i Gold 3DS, R4iSDHC family, R4 SDHC Dual-Core
 (DSi mode only), and Datel carts (Games N' Music, Max Media Player, Action
 Replay DS).
 
+> [!NOTE]
+> If normal Ace3DS+ detection fails, `Try recovery header` offers the known 2
+> MiB R4iSDHC.hk Dual Core 2021 stock profile. It verifies the Deep Labyrinth
+> recovery header and `RDID 1540EF` before enabling backup or restore. Back up
+> first and restore only a verified image.
+
 `Sanras`'s [flashcart guide](https://sanrax.github.io/flashcart-guides/) covers which retail carts these map to, and has a full walkthrough for [changing a flashcart's banner](https://sanrax.github.io/flashcart-guides/tutorials/icon-change/) using this tool.
 
 > [!CAUTION]
@@ -90,8 +96,3 @@ Copyright © the original `ntrboot_flasher_nds` authors and later contributors
 (see Credits above, and the git history for per-change authorship). The vendored
 `flashcart_core` and `libncgc` are also GPL-3.0, under their own `LICENSE` and
 `MODIFICATIONS.md`.
-> [!NOTE]
-> If normal Ace3DS+ detection fails, `Try recovery header` offers the known 2
-> MiB R4iSDHC.hk Dual Core 2021 stock profile. It verifies the Deep Labyrinth
-> recovery header and `RDID 1540EF` before enabling backup or restore. Back up
-> first and restore only a verified image.
