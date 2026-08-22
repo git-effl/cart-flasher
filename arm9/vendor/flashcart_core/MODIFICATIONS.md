@@ -62,3 +62,9 @@ commit `03d464c` (tag `v1.1.0`). Changes by `@tasken`:
   ROMCNT `0x00416017`, and `RDID 1540EF`. The profile rejects any other flash
   capacity and disables ntrboot injection; backup and restore stay behind the
   ordinary write combo.
+- 2026-08-22 -- `devices/ace3dsplus.cpp`: added a second recovery candidate
+  for the hardware-validated 2 MiB SpongeBob image: `SPONGEBOB AP` / `AL3E` /
+  `78`, seed `0x00`, Key1 ROMCNT `0x001808F8`, Key2 ROMCNT `0x00416017`, and
+  RDID `1528C2`. Recovery resets before each ADLE/AL3E candidate, requires
+  capacity `0x15`, and keeps ntrboot injection disabled while a profile is
+  active.

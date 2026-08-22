@@ -35,6 +35,17 @@ const Ace3DSRecoveryProfile r4iSdhcHkDualCore2021Adle = {
     0x15,
 };
 
+const Ace3DSRecoveryProfile r4iSdhcHkSpongebobAl3e = {
+    "R4iSDHC.hk SpongeBob (AL3E recovery)",
+    "r4isdhc-hk-al3e-recovery",
+    "Known 2 MiB AL3E stock profile.\nBack up first; restore only a verified image.",
+    0x45334C41u,
+    0x001808F8u,
+    0x00416017u,
+    0x00,
+    0x15,
+};
+
 class Ace3DSPlus : Flashcart {
     const Ace3DSRecoveryProfile *m_recoveryProfile;
 
@@ -316,8 +327,8 @@ class Ace3DSPlus : Flashcart {
         ncgc::c::ncgc_ncard_t& state = m_card->rawState();
         if (m_recoveryProfile) {
             logMessage(LOG_NOTICE,
-                "Ace3DSPlus recovery: header game code %08lX; forcing ADLE profile",
-                static_cast<unsigned long>(state.hdr.game_code));
+                "Ace3DSPlus recovery: header game code %08lX; forcing %s profile",
+                static_cast<unsigned long>(state.hdr.game_code), m_recoveryProfile->shortName);
             state.hdr.game_code = m_recoveryProfile->gameCode;
             state.hdr.key1_romcnt = state.key1.romcnt = m_recoveryProfile->key1Romcnt;
             state.hdr.key2_romcnt = state.key2.romcnt = m_recoveryProfile->key2Romcnt;
@@ -491,31 +502,37 @@ public:
 
     const char *getRecoveryPrompt() const override {
         return
-            "Deep Labyrinth profile\n"
-            "2 MiB R4iSDHC.hk 2021 only.";
+            "Known 2 MiB recovery profiles\n"
+            "for Deep Labyrinth or SpongeBob.";
     }
 
     bool initializeRecovery(ncgc::NTRCard *card) override {
         m_card = card;
-        m_recoveryProfile = &r4iSdhcHkDualCore2021Adle;
-        const ncgc::Err reset = m_card->init();
-        if (reset && !reset.unsupported()) {
-            logMessage(LOG_ERR, "Ace3DSPlus recovery: raw reset failed: %d", reset.errNo());
-            m_recoveryProfile = nullptr;
-            return false;
-        }
-        if (m_card->state() != ncgc::NTRState::Raw) {
-            logMessage(LOG_ERR, "Ace3DSPlus recovery: expected RAW state, got %d",
-                static_cast<int>(m_card->state()));
-            m_recoveryProfile = nullptr;
-            return false;
-        }
+        const Ace3DSRecoveryProfile *const profiles[] = {
+            &r4iSdhcHkDualCore2021Adle,
+            &r4iSdhcHkSpongebobAl3e
+        };
+        for (const Ace3DSRecoveryProfile *profile : profiles) {
+            m_recoveryProfile = profile;
+            const ncgc::Err reset = m_card->init();
+            if (reset && !reset.unsupported()) {
+                logMessage(LOG_ERR, "Ace3DSPlus recovery: raw reset failed: %d", reset.errNo());
+                m_recoveryProfile = nullptr;
+                return false;
+            }
+            if (m_card->state() != ncgc::NTRState::Raw) {
+                logMessage(LOG_ERR, "Ace3DSPlus recovery: expected RAW state, got %d",
+                    static_cast<int>(m_card->state()));
+                m_recoveryProfile = nullptr;
+                return false;
+            }
 
-        const bool initialized = initialize();
-        if (!initialized) {
+            if (initialize()) {
+                return true;
+            }
             m_recoveryProfile = nullptr;
         }
-        return initialized;
+        return false;
     }
 
     bool initialize() {
