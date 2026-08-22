@@ -24,6 +24,10 @@ jobs:
         # keeping the /releases/latest/download/cart_flasher.nds URL permanent.
         # The build identity remains available in the in-app boot screen.
         run: |
+          # actions/checkout owns this workspace, while the BlocksDS container
+          # runs as a different UID. Trust this exact checkout so Makefile's
+          # build-summary git lookup does not emit a dubious-ownership error.
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
           SHORT_SHA=$(printf '%.7s' "$GITHUB_SHA")
           make NDS_OUT=cart_flasher.nds CART_FLASHER_COMMIT="$SHORT_SHA" CART_FLASHER_VERSION=${{ github.ref_name }} CART_FLASHER_BUILD_KIND=Release
           echo "short_sha=$SHORT_SHA" >> "$GITHUB_OUTPUT"
