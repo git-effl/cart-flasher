@@ -291,7 +291,7 @@ static return_codes_t StreamFlash(flashcart_core::Flashcart* cart, const char* f
 	const char *addrVerb = isRead ? "Reading" : "Writing";
 	const char *progressLabel = isRead ? "Reading flash" : "Writing flash";
 
-	DrawString(TOP_SCREEN, FONT_WIDTH, 6 * FONT_HEIGHT, COLOR_WHITE, headerText);
+	DrawString(TOP_SCREEN, FONT_WIDTH, 2 * FONT_HEIGHT, COLOR_WHITE, headerText);
 
 	progressCount = 0; // start the driver-side draw throttle from a known phase
 	ShowProgress(BOTTOM_SCREEN, 0, Flash_size, progressLabel);
@@ -300,8 +300,8 @@ static return_codes_t StreamFlash(flashcart_core::Flashcart* cart, const char* f
 		SetProgressOverride(chunkOffset, Flash_size);
 		char addrStr[64];
 		sprintf(addrStr, "%s address: 0x%08lX", addrVerb, chunkOffset);
-		DrawRectangle(TOP_SCREEN, FONT_WIDTH, 8 * FONT_HEIGHT, SCREEN_WIDTH - (2 * FONT_WIDTH), FONT_HEIGHT, COLOR_BLACK);
-		DrawString(TOP_SCREEN, FONT_WIDTH, 8 * FONT_HEIGHT, COLOR_WHITE, addrStr);
+		DrawRectangle(TOP_SCREEN, FONT_WIDTH, 4 * FONT_HEIGHT, SCREEN_WIDTH - (2 * FONT_WIDTH), FONT_HEIGHT, COLOR_BLACK);
+		DrawString(TOP_SCREEN, FONT_WIDTH, 4 * FONT_HEIGHT, COLOR_WHITE, addrStr);
 
 		u32 currentChunkSize = std::min(chunkSize, Flash_size - chunkOffset);
 

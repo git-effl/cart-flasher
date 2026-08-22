@@ -48,6 +48,13 @@ commit `03d464c` (tag `v1.1.0`). Changes by `@tasken`:
   StreamFlash's absolute `Writing flash` progress. The driver had been drawing
   a block-relative `Writing` indicator while StreamFlash alternated it with
   its chunk-relative label, producing visible bottom-screen flicker.
+- 2026-08-21 -- `devices/ak2i.cpp`, `devices/dstt.cpp`, `devices/r4isdhc.cpp`,
+  `devices/r4isdhchk.cpp`, `devices/r4igold3ds.cpp`, `flash_util.h`: handle
+  every NTR card command result. Reads, initialization, erase/program
+  operations, and busy polls now log and stop on transport failure instead of
+  continuing with stale or uninitialized data. Cleanup-only commands log their
+  failures; FlashUtil also propagates a failed page program instead of relying
+  only on later readback verification.
 - 2026-08-21 -- `devices/ace3dsplus.cpp`: added a recovery profile for the
   known shared 2 MiB R4iSDHC.hk Dual Core 2021 stock image. The archived image
   and real recovered cart both use `DEEPLABYRINT` / `ADLE` / `EB`,

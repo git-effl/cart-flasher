@@ -35,28 +35,54 @@ static_assert(norRaw(0x34, 0x56, 0x12) == 0x56341299, "norRaw result is wrong");
 }
 
 class R4iSDHC : Flashcart {
-    uint32_t norRead(const uint32_t address) {
-        CmdBuf4 buf;
-        m_card->sendCommand(norCmd(2, 5, 0x3B, address), buf.u8, 4, 0x180000);
+    enum class CartType1Check {
+        Match,
+        NoMatch,
+        Error,
+    };
+
+    bool norRead(const uint32_t address, uint32_t *result) {
+        CmdBuf4 buf = {};
+        const ncgc::Err err = m_card->sendCommand(norCmd(2, 5, 0x3B, address), buf.u8, 4, 0x180000);
+        if (err) {
+            logMessage(LOG_ERR, "r4isdhc: NOR read at %X failed: %d", address, err.errNo());
+            return false;
+        }
+
         logMessage(LOG_DEBUG, "R4ISDHC: NOR read at %X returned %X", address, buf.u32);
-        return buf.u32;
+        *result = buf.u32;
+        return true;
     }
 
     bool norRead(uint32_t addr, uint32_t size, void *dest) {
-        uint32_t res = norRead(addr);
+        uint32_t res;
+        if (!norRead(addr, &res)) {
+            return false;
+        }
         std::memcpy(dest, &res, std::min<uint32_t>(size, 4));
 
         return true;
     }
 
-    void norWriteEnable() {
-        m_card->sendCommand(norCmd(0, 1, 6, 0), nullptr, 4, 0x180000);
+    bool norWriteEnable() {
+        const ncgc::Err err = m_card->sendCommand(norCmd(0, 1, 6, 0), nullptr, 4, 0x180000);
+        if (err) {
+            logMessage(LOG_ERR, "r4isdhc: NOR write enable failed: %d", err.errNo());
+            return false;
+        }
         ncgc::delay(0x60000);
+        return true;
     }
 
     bool norErase4k(const uint32_t address) {
-        norWriteEnable();
-        m_card->sendCommand(norCmd(0, 4, 0x20, address), nullptr, 4, 0x180000);
+        if (!norWriteEnable()) {
+            return false;
+        }
+        const ncgc::Err err = m_card->sendCommand(norCmd(0, 4, 0x20, address), nullptr, 4, 0x180000);
+        if (err) {
+            logMessage(LOG_ERR, "r4isdhc: NOR erase at %X failed: %d", address, err.errNo());
+            return false;
+        }
         ncgc::delay(41000000);
 
         // now ideally if i could read the NOR status register, i'd do the memcpy here
@@ -67,8 +93,12 @@ class R4iSDHC : Flashcart {
         uint32_t retry = 0;
         while (retry < 10) {
             // some sanity checks..
-            success = norRead(address) == 0xFFFFFFFF &&
-                norRead(address + 0x1000 - 4) == 0xFFFFFFFF;
+            uint32_t first;
+            uint32_t last;
+            if (!norRead(address, &first) || !norRead(address + 0x1000 - 4, &last)) {
+                return false;
+            }
+            success = first == 0xFFFFFFFF && last == 0xFFFFFFFF;
             if (success) {
                 break;
             }
@@ -78,53 +108,78 @@ class R4iSDHC : Flashcart {
             ncgc::delay(41000000);
         }
 
+        if (!success) {
+            logMessage(LOG_ERR, "r4isdhc: NOR erase at %X did not verify", address);
+        }
         return success;
     }
 
     bool norWrite256(const uint32_t address, const void *src) {
         const uint8_t *bytes = static_cast<const uint8_t *>(src);
-        norWriteEnable();
-        m_card->sendCommand(norCmd(0, 6, 2, address, bytes[0], bytes[1]), nullptr, 4, 0x180000);
-        for (uint32_t cur = 2; cur < 0x100; cur += 2) {
-            m_card->sendCommand(norRaw(bytes[cur], bytes[cur+1]), nullptr, 4, 0x180000);
+        if (!norWriteEnable()) {
+            return false;
         }
-        m_card->sendCommand(norRaw(bytes[0], bytes[1], 0xF0), nullptr, 4, 0x180000);
+        ncgc::Err err = m_card->sendCommand(norCmd(0, 6, 2, address, bytes[0], bytes[1]), nullptr, 4, 0x180000);
+        if (err) {
+            logMessage(LOG_ERR, "r4isdhc: NOR write at %X failed: %d", address, err.errNo());
+            return false;
+        }
+        for (uint32_t cur = 2; cur < 0x100; cur += 2) {
+            if ((err = m_card->sendCommand(norRaw(bytes[cur], bytes[cur+1]), nullptr, 4, 0x180000))) {
+                logMessage(LOG_ERR, "r4isdhc: NOR write at %X failed: %d", address + cur, err.errNo());
+                return false;
+            }
+        }
+        if ((err = m_card->sendCommand(norRaw(bytes[0], bytes[1], 0xF0), nullptr, 4, 0x180000))) {
+            logMessage(LOG_ERR, "r4isdhc: NOR write commit at %X failed: %d", address, err.errNo());
+            return false;
+        }
         ncgc::delay(0x60000);
 
         return true;
     }
 
-    bool checkCartType1() {
-        CmdBuf4 buf;
+    CartType1Check checkCartType1() {
+        CmdBuf4 buf = {};
         // this is actually the NOR write disable command
         // the r4isdhc will respond to cart commands with 0xFFFFFFFF if
         // the "magic" command hasn't been sent, so we check for that
-        m_card->sendCommand(0x40199, buf.u8, 4, 0x180000);
+        ncgc::Err err = m_card->sendCommand(0x40199, buf.u8, 4, 0x180000);
+        if (err) {
+            logMessage(LOG_ERR, "r4isdhc: checkCartType1: pre-test failed: %d", err.errNo());
+            return CartType1Check::Error;
+        }
         if (m_card->state() == ncgc::NTRState::Raw) {
             if (buf.u32 != 0xFFFFFFFF) {
                 logMessage(LOG_ERR, "r4isdhc: checkCartType1: pre-test returned 0x%08X", buf.u32);
-                return false;
+                return CartType1Check::NoMatch;
             }
         }
 
-        ncgc::Err err = m_card->init();
+        err = m_card->init();
         if (err && !err.unsupported()) {
-            logMessage(LOG_ERR, "r4isdhc: checkCartType1: ntrcard::init failed");
-            return false;
+            logMessage(LOG_ERR, "r4isdhc: checkCartType1: ntrcard::init failed: %d", err.errNo());
+            return CartType1Check::Error;
         }
 
         // only type 1 carts support 0x68 command
-        m_card->sendCommand(0x68, nullptr, 4, 0x180000, true);
+        if ((err = m_card->sendCommand(0x68, nullptr, 4, 0x180000, true))) {
+            logMessage(LOG_ERR, "r4isdhc: checkCartType1: magic command failed: %d", err.errNo());
+            return CartType1Check::Error;
+        }
 
         // now it will return zeroes
-        m_card->sendCommand(0x40199, buf.u8, 4, 0x180000, true);
+        if ((err = m_card->sendCommand(0x40199, buf.u8, 4, 0x180000, true))) {
+            logMessage(LOG_ERR, "r4isdhc: checkCartType1: post-test failed: %d", err.errNo());
+            return CartType1Check::Error;
+        }
         if (buf.u32 == 0) {
             m_card->state(ncgc::NTRState::Raw);
-            return true;
+            return CartType1Check::Match;
         }
 
         logMessage(LOG_ERR, "r4isdhc: checkCartType1: post-test returned 0x%08X", buf.u32);
-        return false;
+        return CartType1Check::NoMatch;
     }
 
     bool checkCartType2() {
@@ -135,9 +190,16 @@ class R4iSDHC : Flashcart {
             return false;
         }
 
-        CmdBuf4 buf;
-        m_card->sendCommand(0x66, nullptr, 4, 0x586000, true);
-        m_card->sendCommand(0x40199, buf.u8, 4, 0x180000, true);
+        CmdBuf4 buf = {};
+        ncgc::Err err = m_card->sendCommand(0x66, nullptr, 4, 0x586000, true);
+        if (err) {
+            logMessage(LOG_ERR, "r4isdhc: checkCartType2: magic command failed: %d", err.errNo());
+            return false;
+        }
+        if ((err = m_card->sendCommand(0x40199, buf.u8, 4, 0x180000, true))) {
+            logMessage(LOG_ERR, "r4isdhc: checkCartType2: post-test failed: %d", err.errNo());
+            return false;
+        }
 
         // FIXME this is a really poor check
         // a non-r4isdhc cart will stay in KEY2 and likely return something that isn't all-FF
@@ -204,7 +266,11 @@ public:
     }
 
     bool initialize() {
-        if (checkCartType1()) {
+        const CartType1Check type1Check = checkCartType1();
+        if (type1Check == CartType1Check::Error) {
+            return false;
+        }
+        if (type1Check == CartType1Check::Match) {
             cart_type = 1;
         } else {
             switch (m_card->state()) {
@@ -212,13 +278,13 @@ public:
                     if (!trySecureInit(BlowfishKey::NTR)
                         && !trySecureInit(BlowfishKey::B9Retail)
                         && !trySecureInit(BlowfishKey::B9Dev)) {
-                        logMessage(LOG_DEBUG, "r4isdhc: type 2 init from RAW fail");
+                        logMessage(LOG_ERR, "r4isdhc: type 2 init from RAW failed");
                         return false;
                     }
                     break;
                 case ncgc::NTRState::Key2:
                     if (!checkCartType2()) {
-                        logMessage(LOG_DEBUG, "r4isdhc: type 2 init from KEY2 fail");
+                        logMessage(LOG_ERR, "r4isdhc: type 2 init from KEY2 failed");
                         return false;
                     }
                     break;
@@ -229,7 +295,11 @@ public:
             cart_type = 2;
         }
 
-        uint32_t read1 = norRead(0), read2 = norRead(0);
+        uint32_t read1;
+        uint32_t read2;
+        if (!norRead(0, &read1) || !norRead(0, &read2)) {
+            return false;
+        }
         if (read1 != read2) {
             logMessage(LOG_ERR, "r4isdhc: two reads from flash @ 0 returned 0x%08lX and 0x%08lX", read1, read2);
             return false;

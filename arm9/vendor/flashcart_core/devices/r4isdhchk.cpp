@@ -22,6 +22,16 @@ private:
 
     static uint32_t sw_rev;
 
+    bool sendCommand(const uint8_t (&command)[8], void *response, size_t length,
+        const char *operation) {
+        const ncgc::Err err = m_card->sendCommand(command, response, length, 80);
+        if (err) {
+            logMessage(LOG_ERR, "r4isdhc.hk: %s failed: %d", operation, err.errNo());
+            return false;
+        }
+        return true;
+    }
+
     uint8_t encrypt(uint8_t dec) {
         uint8_t enc = 0;
         if (dec & BIT(0)) enc |= BIT(5);
@@ -56,13 +66,13 @@ private:
         }
     }
 
-    void read_cmd(uint32_t address, uint8_t *resp) {
+    bool read_cmd(uint32_t address, uint8_t *resp) {
         uint8_t cmdbuf[8];
 
         switch (sw_rev) {
             case 0x00000505:
                 /*placeholder if going to be supported in the future. There are no reports that this revision currently exists.*/
-                return;
+                return false;
             case 0x00000605:
                 address = address + 0x610000;
                 memcpy(cmdbuf, cmdReadFlash506, 8);
@@ -72,27 +82,30 @@ private:
                 memcpy(cmdbuf, cmdReadFlash700, 8);
                 break;
             default:
-                return;
+                return false;
         }
 
       cmdbuf[2] = (address >> 16) & 0x1F;
       cmdbuf[3] = (address >>  8) & 0xFF;
       cmdbuf[4] = (address >>  0) & 0xFF;
 
-      m_card->sendCommand(cmdbuf, resp, 0x200, 80);
+      return sendCommand(cmdbuf, resp, 0x200, "flash read");
     }
 
-    void wait_flash_busy(void) {
+    bool wait_flash_busy(void) {
       uint8_t cmdbuf[8];
       uint32_t resp = 0;
       memcpy(cmdbuf, cmdWaitFlashBusy, 8);
 
       do {
-          m_card->sendCommand(cmdbuf, (uint8_t *)&resp, 4, 80);
+          if (!sendCommand(cmdbuf, &resp, 4, "flash busy poll")) {
+              return false;
+          }
       } while(resp);
+      return true;
     }
 
-    void erase_cmd(uint32_t address) {
+    bool erase_cmd(uint32_t address) {
         uint8_t cmdbuf[8];
         logMessage(LOG_DEBUG, "r4isdhc.hk: erase(0x%08x)", address);
         memcpy(cmdbuf, cmdEraseFlash, 8);
@@ -100,11 +113,10 @@ private:
         cmdbuf[2] = (address >>  8) & 0xFF;
         cmdbuf[3] = (address >>  0) & 0xFF;
 
-        m_card->sendCommand(cmdbuf, nullptr, 0, 80);
-        wait_flash_busy();
+        return sendCommand(cmdbuf, nullptr, 0, "flash erase") && wait_flash_busy();
     }
 
-    void write_cmd(uint32_t address, uint8_t value) {
+    bool write_cmd(uint32_t address, uint8_t value) {
         uint8_t cmdbuf[8];
         logMessage(LOG_DEBUG, "r4isdhc.hk: write(0x%08x) = 0x%02x", address, value);
         memcpy(cmdbuf, cmdWriteByteFlash, 8);
@@ -113,8 +125,7 @@ private:
         cmdbuf[3] = (address >>  0) & 0xFF;
         cmdbuf[4] = value;
 
-        m_card->sendCommand(cmdbuf, nullptr, 0, 80);
-        wait_flash_busy();
+        return sendCommand(cmdbuf, nullptr, 0, "flash write") && wait_flash_busy();
     }
 
     bool trySecureInit(BlowfishKey key) {
@@ -145,16 +156,24 @@ private:
         return true;
     }
 
-    void injectFlash(uint32_t chunk_addr, uint32_t chunk_length, uint32_t offset, uint8_t *src, uint32_t src_length, bool encryption) {
+    bool injectFlash(uint32_t chunk_addr, uint32_t chunk_length, uint32_t offset, uint8_t *src, uint32_t src_length, bool encryption) {
         uint8_t *chunk = (uint8_t *)malloc(chunk_length);
-        readFlash(chunk_addr, chunk_length, chunk);
+        if (!chunk) {
+            logMessage(LOG_ERR, "r4isdhc.hk: couldn't allocate injection buffer");
+            return false;
+        }
+        if (!readFlash(chunk_addr, chunk_length, chunk)) {
+            free(chunk);
+            return false;
+        }
         if (encryption) {
             encrypt_memcpy(chunk + offset, src, src_length);
         } else {
             memcpy(chunk + offset, src, src_length);
         }
-        writeFlash(chunk_addr, chunk_length, chunk);
+        const bool written = writeFlash(chunk_addr, chunk_length, chunk);
         free(chunk);
+        return written;
     }
 
 public:
@@ -172,6 +191,7 @@ public:
 
     bool initialize() {
         logMessage(LOG_INFO, "r4isdhc.hk: Init");
+        sw_rev = 0;
 
         if (!trySecureInit(BlowfishKey::NTR) && !trySecureInit(BlowfishKey::B9Retail) && !trySecureInit(BlowfishKey::B9Dev))
         {
@@ -184,23 +204,31 @@ public:
 
         //this is how the updater does it. Not sure exactly what it's for
         do {
-          m_card->sendCommand(cmdGetCartUniqueKey, resp1, 0x200, 80);
-          m_card->sendCommand(cmdGetCartUniqueKey, resp2, 0x200, 80);
+          if (!sendCommand(cmdGetCartUniqueKey, resp1, 0x200, "first unique-key read")
+              || !sendCommand(cmdGetCartUniqueKey, resp2, 0x200, "second unique-key read")) {
+              return false;
+          }
           logMessage(LOG_DEBUG, "resp1: 0x%08x, resp2: 0x%08x", *resp1, *resp2);
         } while(std::memcmp(resp1, resp2, 0x200));
 
-        m_card->sendCommand(cmdGetSWRev, &sw_rev, 4, 80);
+        if (!sendCommand(cmdGetSWRev, &sw_rev, 4, "software revision read")) {
+            return false;
+        }
 
         logMessage(LOG_INFO, "r4isdhc.hk: Current Software Revision: %08x", sw_rev);
 
-        m_card->sendCommand(cmdUnkD0AA, nullptr, 4, 80);
-        m_card->sendCommand(cmdUnkD0AA, nullptr, 4, 80);
-        m_card->sendCommand(cmdGetChipID, nullptr, 0, 80);
-        m_card->sendCommand(cmdUnkD0AA, nullptr, 4, 80);
+        if (!sendCommand(cmdUnkD0AA, nullptr, 4, "setup command")
+            || !sendCommand(cmdUnkD0AA, nullptr, 4, "setup command")
+            || !sendCommand(cmdGetChipID, nullptr, 0, "chip-ID command")
+            || !sendCommand(cmdUnkD0AA, nullptr, 4, "setup command")) {
+            return false;
+        }
 
         do {
-          m_card->sendCommand(cmdGetCartUniqueKey, resp1, 0x200, 80);
-          m_card->sendCommand(cmdGetCartUniqueKey, resp2, 0x200, 80);
+          if (!sendCommand(cmdGetCartUniqueKey, resp1, 0x200, "first unique-key verification")
+              || !sendCommand(cmdGetCartUniqueKey, resp2, 0x200, "second unique-key verification")) {
+              return false;
+          }
         } while(std::memcmp(resp1, resp2, 0x200));
         
         switch (sw_rev) {
@@ -228,7 +256,9 @@ public:
         logMessage(LOG_INFO, "r4isdhc.hk: readFlash(addr=0x%08x, size=0x%x)", address, length);
         for(uint32_t addr = 0; addr < length; addr += 0x200)
         {
-            read_cmd(addr + address, buffer + addr);
+            if (!read_cmd(addr + address, buffer + addr)) {
+                return false;
+            }
             showProgress(addr, length, "Reading");
             for(int i = 0; i < 0x200; i++)
                 /*the read command decrypts the raw flash contents before returning it you*/
@@ -241,7 +271,9 @@ public:
     bool writeFlash(uint32_t address, uint32_t length, const uint8_t *buffer) {
         logMessage(LOG_INFO, "r4isdhc.hk: writeFlash(addr=0x%08x, size=0x%x)", address, length);
         for (uint32_t addr=0; addr < length; addr+=0x10000) {
-           erase_cmd(address + addr);
+           if (!erase_cmd(address + addr)) {
+               return false;
+           }
            showProgress(addr, length, "Erasing");
         }
 
@@ -249,7 +281,9 @@ public:
             /*the write command encrypts whatever you send it before actually writing to flash*/
             /*so we decrypt whatever we send to be written*/
             uint8_t byte = decrypt(buffer[i]);
-            write_cmd(address + i, byte);
+            if (!write_cmd(address + i, byte)) {
+                return false;
+            }
             showProgress(i,length, "Writing");
         }
 
@@ -262,7 +296,10 @@ public:
         uint8_t gameHeader[0x200];
 
         logMessage(LOG_INFO, "r4isdhc.hk: Patch firmware (header)");
-        readFlash(0, 0x10000, block_0);
+        if (!block_0 || !readFlash(0, 0x10000, block_0)) {
+            free(block_0);
+            return false;
+        }
 
         switch (sw_rev) {
             case 0x00000505:
@@ -327,16 +364,19 @@ public:
                 return false;
         }
 
-        readFlash(0x11100, 0x200, gameHeader);
+        if (!readFlash(0x11100, 0x200, gameHeader)) {
+            free(block_0);
+            return false;
+        }
         memcpy(block_0 + 0x1000, gameHeader, 0x200);
         memcpy(block_0 + 0x1600, blowfish_key, 0x1048);
         memcpy(block_0 + 0x3EA8, firm, 0x200);
         memcpy(block_0 + 0x5000, firm + 0x200, firm_size - 0x200);
         encrypt_memcpy(block_0 + 0x1200, block_0 + 0x1200, 0xEE00);
-        injectFlash(0, 0x10000, 0, block_0, 0x10000, false);
+        const bool injected = injectFlash(0, 0x10000, 0, block_0, 0x10000, false);
         
         free(block_0);
-        return true;
+        return injected;
     }
 };
 

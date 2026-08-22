@@ -54,6 +54,7 @@ void DrawString(u16 *screen, int x, int y, u16 color, const char *str);
 void DrawStringF(u16 *screen, int x, int y, u16 color, const char *format, ...);
 void DrawStringCentered(u16 *screen, int y, u16 color, const char *str);
 void DrawListRow(u16 *screen, int y, bool selected, u16 highlightColor, const char *text);
+void DrawTopFooterAction(const char *action);
 
 void SetProgressOverride(uint32_t current, uint32_t total);
 void ShowProgress(u16 *screen, uint32_t current, uint32_t total, const char* status);

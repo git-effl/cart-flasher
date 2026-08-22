@@ -62,7 +62,7 @@ private:
             dst[i] = encrypt(src[i], i);
     }
 
-    void r4i_read(uint8_t *outbuf, uint32_t address) {
+    bool r4i_read(uint8_t *outbuf, uint32_t address) {
         uint8_t cmdbuf[8];
         logMessage(LOG_DEBUG, "R4iGold: read(0x%08x)", address);
         memcpy(cmdbuf, cmdReadFlash, 8);
@@ -70,13 +70,17 @@ private:
         cmdbuf[2] = (address >>  8) & 0xFF;
         cmdbuf[3] = (address >>  0) & 0xFF;
 
-        m_card->sendCommand(cmdbuf, outbuf, 0x200, 32);
-        r4i_wait_flash_busy();
+        const ncgc::Err err = m_card->sendCommand(cmdbuf, outbuf, 0x200, 32);
+        if (err) {
+            logMessage(LOG_ERR, "R4iGold: read at 0x%08x failed: %d", address, err.errNo());
+            return false;
+        }
+        return r4i_wait_flash_busy();
     }
 
-    void r4i_erase(uint32_t address)
+    bool r4i_erase(uint32_t address)
     {
-        uint32_t status;
+        uint32_t status = 0;
         uint8_t cmdbuf[8];
         logMessage(LOG_DEBUG, "R4iGold: erase(0x%08x)", address);
         memcpy(cmdbuf, cmdEraseFlash, 8);
@@ -84,13 +88,17 @@ private:
         cmdbuf[2] = (address >>  8) & 0xFF;
         cmdbuf[3] = (address >>  0) & 0xFF;
 
-        m_card->sendCommand(cmdbuf, &status, 4, 32);
-        r4i_wait_flash_busy();
+        const ncgc::Err err = m_card->sendCommand(cmdbuf, &status, 4, 32);
+        if (err) {
+            logMessage(LOG_ERR, "R4iGold: erase at 0x%08x failed: %d", address, err.errNo());
+            return false;
+        }
+        return r4i_wait_flash_busy();
     }
 
-    void r4i_writebyte(uint32_t address, uint8_t value)
+    bool r4i_writebyte(uint32_t address, uint8_t value)
     {
-        uint32_t status;
+        uint32_t status = 0;
         uint8_t cmdbuf[8];
         logMessage(LOG_DEBUG, "R4iGold: write(0x%08x) = 0x%02x", address, value);
         memcpy(cmdbuf, cmdWriteByteFlash, 8);
@@ -99,28 +107,45 @@ private:
         cmdbuf[3] = (address >>  0) & 0xFF;
         cmdbuf[4] = value;
 
-        m_card->sendCommand(cmdbuf, &status, 4, 32);
-        r4i_wait_flash_busy();
+        const ncgc::Err err = m_card->sendCommand(cmdbuf, &status, 4, 32);
+        if (err) {
+            logMessage(LOG_ERR, "R4iGold: write at 0x%08x failed: %d", address, err.errNo());
+            return false;
+        }
+        return r4i_wait_flash_busy();
     }
 
-    void r4i_wait_flash_busy() {
-        uint32_t state;
+    bool r4i_wait_flash_busy() {
+        uint32_t state = 0;
         do {
-            m_card->sendCommand(cmdWaitFlashBusy, &state, 4, 32);
+            const ncgc::Err err = m_card->sendCommand(cmdWaitFlashBusy, &state, 4, 32);
+            if (err) {
+                logMessage(LOG_ERR, "R4iGold: waitFlashBusy failed: %d", err.errNo());
+                return false;
+            }
             logMessage(LOG_DEBUG, "R4iGold: waitFlashBusy = 0x%08x", state);
         } while ((state & 1) != 0);
+        return true;
     }
 
-    void injectFlash(uint32_t chunk_addr, uint32_t chunk_length, uint32_t offset, uint8_t *src, uint32_t src_length, bool encrypt) {
+    bool injectFlash(uint32_t chunk_addr, uint32_t chunk_length, uint32_t offset, uint8_t *src, uint32_t src_length, bool encrypt) {
         uint8_t *chunk = (uint8_t *)malloc(chunk_length);
-        readFlash(chunk_addr, chunk_length, chunk);
+        if (chunk == nullptr) {
+            logMessage(LOG_ERR, "R4iGold: failed to allocate injection buffer");
+            return false;
+        }
+        if (!readFlash(chunk_addr, chunk_length, chunk)) {
+            free(chunk);
+            return false;
+        }
         if (encrypt) {
             encrypt_memcpy(chunk + offset, src, src_length);
         } else {
             memcpy(chunk + offset, src, src_length);
         }
-        writeFlash(chunk_addr, chunk_length, chunk);
+        const bool success = writeFlash(chunk_addr, chunk_length, chunk);
         free(chunk);
+        return success;
     }
 
 protected:
@@ -162,10 +187,17 @@ public:
     bool initialize()
     {
         logMessage(LOG_INFO, "R4iGold: Init");
-        uint32_t hw_revision;
-        uint32_t hw_type;
-        m_card->sendCommand(cmdGetHWRevision, (uint8_t*)&hw_revision, 4, 0);
-        m_card->sendCommand(cmdCardType, (uint8_t*)&hw_type, 4, 0);
+        uint32_t hw_revision = 0;
+        uint32_t hw_type = 0;
+        ncgc::Err err = m_card->sendCommand(cmdGetHWRevision, &hw_revision, 4, 0);
+        if (err) {
+            logMessage(LOG_ERR, "R4iGold: hardware revision read failed: %d", err.errNo());
+            return false;
+        }
+        if ((err = m_card->sendCommand(cmdCardType, &hw_type, 4, 0))) {
+            logMessage(LOG_ERR, "R4iGold: hardware type read failed: %d", err.errNo());
+            return false;
+        }
         logMessage(LOG_NOTICE, "R4iGold: HW Revision = %08x", hw_revision);
         logMessage(LOG_NOTICE, "R4iGold: HW Type = %08x", hw_type);
 
@@ -179,6 +211,7 @@ public:
             case 0:
                 break;
             default:
+                logMessage(LOG_ERR, "R4iGold: unsupported hardware revision %08x", hw_revision);
                 return false;
         }
         switch (hw_type) {
@@ -197,6 +230,7 @@ public:
                 m_r4i_type = 3;
                 return true;
         }
+        logMessage(LOG_ERR, "R4iGold: unsupported hardware type %08x", hw_type);
         return false;
     }
 
@@ -208,7 +242,9 @@ public:
     {
         logMessage(LOG_INFO, "R4iGold: readFlash(addr=0x%08x, size=0x%x)", address, length);
         for (uint32_t curpos=0; curpos < length; curpos+=0x200) {
-            r4i_read(buffer + curpos, address + curpos);
+            if (!r4i_read(buffer + curpos, address + curpos)) {
+                return false;
+            }
             showProgress(curpos+1,length, "Reading");
         }
 
@@ -218,11 +254,16 @@ public:
     bool writeFlash(uint32_t address, uint32_t length, const uint8_t *buffer)
     {
         logMessage(LOG_INFO, "R4iGold: writeFlash(addr=0x%08x, size=0x%x)", address, length);
-        for (uint32_t addr=0; addr < length; addr+=0x10000)
-            r4i_erase(address + addr);
+        for (uint32_t addr=0; addr < length; addr+=0x10000) {
+            if (!r4i_erase(address + addr)) {
+                return false;
+            }
+        }
 
         for (uint32_t i=0; i < length; i++) {
-            r4i_writebyte(address + i, buffer[i]);
+            if (!r4i_writebyte(address + i, buffer[i])) {
+                return false;
+            }
             showProgress(i+1,length, "Writing");
         }
 
@@ -245,12 +286,15 @@ public:
         }
 
         logMessage(LOG_INFO, "R4iGold: Injecting ntrboot");
-        injectFlash(set->blowfish_chunk_adr, 0x10000, set->blowfish_offset, blowfish_key, 0x1048, set->encrypt_header);
-        injectFlash(set->firm_hdr_chunk_adr, 0x10000, set->firm_hdr_offset, firm, 0x200, set->encrypt_header);
+        if (!injectFlash(set->blowfish_chunk_adr, 0x10000, set->blowfish_offset, blowfish_key, 0x1048, set->encrypt_header)) {
+            return false;
+        }
+        if (!injectFlash(set->firm_hdr_chunk_adr, 0x10000, set->firm_hdr_offset, firm, 0x200, set->encrypt_header)) {
+            return false;
+        }
 
         uint32_t buf_size = PAGE_ROUND_UP(firm_size - 0x200 + set->firm_offset, 0x10000);
-        injectFlash(set->firm_chunk_adr, buf_size, set->firm_offset, firm + 0x200, firm_size, true);
-        return true;
+        return injectFlash(set->firm_chunk_adr, buf_size, set->firm_offset, firm + 0x200, firm_size, true);
     }
 };
 

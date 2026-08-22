@@ -37,6 +37,7 @@ public:
         return initialize();
     }
     virtual bool hasRecoveryProfile() const { return false; }
+    virtual const char *getRecoveryPrompt() const { return nullptr; }
     virtual bool initializeRecovery(ncgc::NTRCard *card) {
         (void)card;
         return false;

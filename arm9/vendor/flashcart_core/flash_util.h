@@ -136,7 +136,10 @@ public:
                 }
 
                 std::memcpy(buf + buf_ofs, src + src_ofs, len);
-                writeHelper(fc, cur_addr, buf);
+                if (!writeHelper(fc, cur_addr, buf)) {
+                    platform::logMessage(LOG_ERR, "FlashUtil::write: page program failed");
+                    goto fail;
+                }
             }
 
             cur += eraseSize;

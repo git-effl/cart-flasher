@@ -489,6 +489,12 @@ public:
         return true;
     }
 
+    const char *getRecoveryPrompt() const override {
+        return
+            "Deep Labyrinth profile\n"
+            "2 MiB R4iSDHC.hk 2021 only.";
+    }
+
     bool initializeRecovery(ncgc::NTRCard *card) override {
         m_card = card;
         m_recoveryProfile = &r4iSdhcHkDualCore2021Adle;

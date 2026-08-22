@@ -123,7 +123,8 @@ private:
         DSTT_CMD_TYPE_2
     } m_cmd_type;
 
-    uint32_t dstt_flash_command(uint8_t data0, uint32_t data1, uint16_t data2)
+    bool dstt_flash_command(uint8_t data0, uint32_t data1, uint16_t data2,
+                            uint32_t *response = nullptr)
     {
         uint8_t cmd[8];
         cmd[0] = data0;
@@ -135,46 +136,58 @@ private:
         cmd[6] = (uint8_t)((data2 >>  0)&0xFF);
         cmd[7] = 0x00;
 
-        uint32_t ret;
-
-        m_card->sendCommand(cmd, (uint8_t*)&ret, 4, 0xa7180000);
-        return ret;
+        uint32_t ret = 0;
+        const ncgc::Err err = m_card->sendCommand(cmd, &ret, 4, 0xa7180000);
+        if (err) {
+            logMessage(LOG_ERR, "DSTT: command 0x%02x at 0x%08x failed: %d",
+                       data0, data1, err.errNo());
+            return false;
+        }
+        if (response) {
+            *response = ret;
+        }
+        return true;
     }
 
-    void dstt_reset()
+    bool dstt_reset()
     {
         logMessage(LOG_DEBUG, "DSTT: Reset");
         if (m_cmd_type == DSTT_CMD_TYPE_2) {
-            dstt_flash_command(0x87, 0, 0xFF);
+            return dstt_flash_command(0x87, 0, 0xFF);
         } else if (m_cmd_type == DSTT_CMD_TYPE_1) {
-            dstt_flash_command(0x87, 0, 0xF0);
+            return dstt_flash_command(0x87, 0, 0xF0);
         }
+        return true;
     }
 
-    uint32_t get_flashchip_id()
+    bool get_flashchip_id(uint32_t *flashchip)
     {
-        uint32_t flashchip;
-
-        dstt_flash_command(0x87, 0x5555, 0xAA);
-        dstt_flash_command(0x87, 0x2AAA, 0x55);
-        dstt_flash_command(0x87, 0x5555, 0x90);
-        flashchip = dstt_flash_command(0, 0, 0);
-        dstt_reset();
-
-        if ((flashchip & 0xFF00FFFF) != 0x7F003437 && (flashchip & 0xFF00FFFF) != 0x7F00B537
-              && (uint16_t)flashchip != 0x41F && (uint16_t)flashchip != 0x51F)
-        {
-            dstt_flash_command(0x87, 0x5555, 0xAA);
-            dstt_flash_command(0x87, 0x2AAA, 0x55);
-            dstt_flash_command(0x87, 0x5555, 0x90);
-            uint32_t device_id = dstt_flash_command(0, 0x100, 0);
-            dstt_reset();
-
-            if ((uint16_t)device_id == 0xBA1C || (uint16_t)device_id == 0xB91C)
-                return device_id;
+        if (!dstt_flash_command(0x87, 0x5555, 0xAA) ||
+            !dstt_flash_command(0x87, 0x2AAA, 0x55) ||
+            !dstt_flash_command(0x87, 0x5555, 0x90) ||
+            !dstt_flash_command(0, 0, 0, flashchip) ||
+            !dstt_reset()) {
+            return false;
         }
 
-        return flashchip;
+        if ((*flashchip & 0xFF00FFFF) != 0x7F003437 &&
+            (*flashchip & 0xFF00FFFF) != 0x7F00B537 &&
+            (uint16_t)*flashchip != 0x41F && (uint16_t)*flashchip != 0x51F)
+        {
+            uint32_t device_id;
+            if (!dstt_flash_command(0x87, 0x5555, 0xAA) ||
+                !dstt_flash_command(0x87, 0x2AAA, 0x55) ||
+                !dstt_flash_command(0x87, 0x5555, 0x90) ||
+                !dstt_flash_command(0, 0x100, 0, &device_id) ||
+                !dstt_reset()) {
+                return false;
+            }
+
+            if ((uint16_t)device_id == 0xBA1C || (uint16_t)device_id == 0xB91C)
+                *flashchip = device_id;
+        }
+
+        return true;
     }
 
     bool flashchip_supported(uint32_t flashchip)
@@ -186,11 +199,15 @@ private:
 			uint8_t writeProtected = false;
 			uint32_t address = 0;
 			for (; address < 0x10000; address += 0x4000) {
-				dstt_flash_command(0x87, 0x5555, 0xAA);
-				dstt_flash_command(0x87, 0x2AAA, 0x55);
-				dstt_flash_command(0x87, 0x5555, 0x90);
-				writeProtected = (uint8_t)(dstt_flash_command(0, address | 2, 0));
-				dstt_reset();
+				uint32_t response;
+				if (!dstt_flash_command(0x87, 0x5555, 0xAA) ||
+				    !dstt_flash_command(0x87, 0x2AAA, 0x55) ||
+				    !dstt_flash_command(0x87, 0x5555, 0x90) ||
+				    !dstt_flash_command(0, address | 2, 0, &response) ||
+				    !dstt_reset()) {
+				    return false;
+				}
+				writeProtected = (uint8_t)response;
 				if (writeProtected) break;
 			};
 			if (writeProtected != 0) {
@@ -206,38 +223,54 @@ private:
         return false;
     }
 
-    void Erase_Block(uint32_t offset, uint32_t length)
+    bool Erase_Block(uint32_t offset, uint32_t length)
     {
         logMessage(LOG_DEBUG, "DSTT: erase_block(0x%08x)", offset);
         if (m_cmd_type == DSTT_CMD_TYPE_1) {
-            dstt_flash_command(0x87, 0x5555, 0xAA);
-            dstt_flash_command(0x87, 0x2AAA, 0x55);
-            dstt_flash_command(0x87, 0x5555, 0x80);
-            dstt_flash_command(0x87, 0x5555, 0xAA);
-            dstt_flash_command(0x87, 0x2AAA, 0x55);
-
-            dstt_flash_command(0x87, offset, 0x30);
+            if (!dstt_flash_command(0x87, 0x5555, 0xAA) ||
+                !dstt_flash_command(0x87, 0x2AAA, 0x55) ||
+                !dstt_flash_command(0x87, 0x5555, 0x80) ||
+                !dstt_flash_command(0x87, 0x5555, 0xAA) ||
+                !dstt_flash_command(0x87, 0x2AAA, 0x55) ||
+                !dstt_flash_command(0x87, offset, 0x30)) {
+                return false;
+            }
         } else if (m_cmd_type == DSTT_CMD_TYPE_2) {
-            dstt_flash_command(0x87, 0x00,   0x50); // Clear Status Register
-            dstt_flash_command(0x87, offset, 0x20); // Erase Setup
-            dstt_flash_command(0x87, offset, 0xD0); // Erase Confirm
+            if (!dstt_flash_command(0x87, 0x00,   0x50) || // Clear Status Register
+                !dstt_flash_command(0x87, offset, 0x20) || // Erase Setup
+                !dstt_flash_command(0x87, offset, 0xD0)) { // Erase Confirm
+                return false;
+            }
 
             // TODO: Timeout if something goes wrong.
-            while (!(dstt_flash_command(0, offset & 0xFFFFFFFC, 0) & 0x80));
+            uint32_t response;
+            do {
+                if (!dstt_flash_command(0, offset & 0xFFFFFFFC, 0, &response)) {
+                    return false;
+                }
+            } while (!(response & 0x80));
 
-            dstt_flash_command(0x87, 0x00, 0x50); // Clear Status Register
-            dstt_flash_command(0x87, 0x00, 0xFF); // Reset
+            if (!dstt_flash_command(0x87, 0x00, 0x50) || // Clear Status Register
+                !dstt_flash_command(0x87, 0x00, 0xFF)) { // Reset
+                return false;
+            }
         }
 
         uint32_t end_offset = offset + length;
         for (; offset < end_offset; offset += 4)
         {
             // TODO: Timeout if something goes wrong.
-            while (dstt_flash_command(0, offset, 0) != 0xFFFFFFFF);
+            uint32_t response;
+            do {
+                if (!dstt_flash_command(0, offset, 0, &response)) {
+                    return false;
+                }
+            } while (response != 0xFFFFFFFF);
         }
+        return true;
     }
 
-    void Erase_Chip() {
+    bool Erase_Chip() {
         std::vector<uint32_t> erase_blocks;
         logMessage(LOG_INFO, "DSTT: Erasing Flash");
 
@@ -321,34 +354,54 @@ private:
         uint32_t erase_addr = 0;
         for (auto const& block_sz: erase_blocks) {
             showProgress(erase_addr, erase_endaddr, "Erasing Blocks");
-            Erase_Block(erase_addr, block_sz);
+            if (!Erase_Block(erase_addr, block_sz)) {
+                return false;
+            }
             erase_addr += block_sz;
         }
+        return true;
     }
 
     // pretty messy function, but gets the job done
-    void Program_Byte(uint32_t offset, uint8_t data)
+    bool Program_Byte(uint32_t offset, uint8_t data)
     {
         logMessage(LOG_DEBUG, "DSTT: program_byte(0x%08x) = 0x%02x", offset, data);
         if (m_cmd_type == DSTT_CMD_TYPE_2) {
-            dstt_flash_command(0x87, 0x00,   0x50); // Clear Status Register
-            dstt_flash_command(0x87, offset, 0x40); // Word Write
-            dstt_flash_command(0x87, offset, data);
+            if (!dstt_flash_command(0x87, 0x00,   0x50) || // Clear Status Register
+                !dstt_flash_command(0x87, offset, 0x40) || // Word Write
+                !dstt_flash_command(0x87, offset, data)) {
+                return false;
+            }
 
             // TODO: Timeout if something goes wrong.
-            while (!(dstt_flash_command(0, offset & 0xFFFFFFFC, 0) & 0x80));
+            uint32_t response;
+            do {
+                if (!dstt_flash_command(0, offset & 0xFFFFFFFC, 0, &response)) {
+                    return false;
+                }
+            } while (!(response & 0x80));
 
-            dstt_flash_command(0x87, 0x00, 0x50); // Clear Status Register
+            if (!dstt_flash_command(0x87, 0x00, 0x50)) { // Clear Status Register
+                return false;
+            }
             //dstt_flash_command(0x87, offset, 0xFF); // Reset (offset not required)
         } else if (m_cmd_type == DSTT_CMD_TYPE_1) {
-            dstt_flash_command(0x87, 0x5555, 0xAA);
-            dstt_flash_command(0x87, 0x2AAA, 0x55);
-            dstt_flash_command(0x87, 0x5555, 0xA0);
-            dstt_flash_command(0x87, offset, data);
+            if (!dstt_flash_command(0x87, 0x5555, 0xAA) ||
+                !dstt_flash_command(0x87, 0x2AAA, 0x55) ||
+                !dstt_flash_command(0x87, 0x5555, 0xA0) ||
+                !dstt_flash_command(0x87, offset, data)) {
+                return false;
+            }
 
             // TODO: Timeout if something goes wrong.
-            while ((uint8_t)dstt_flash_command(0, offset, 0) != data);
+            uint32_t response;
+            do {
+                if (!dstt_flash_command(0, offset, 0, &response)) {
+                    return false;
+                }
+            } while ((uint8_t)response != data);
         }
+        return true;
     }
 
 public:
@@ -364,9 +417,13 @@ public:
     bool initialize()
     {
         logMessage(LOG_INFO, "DSTT: Init");
-        dstt_flash_command(0x86, 0, 0);
+        if (!dstt_flash_command(0x86, 0, 0)) {
+            return false;
+        }
 
-        m_flashchip = get_flashchip_id();
+        if (!get_flashchip_id(&m_flashchip)) {
+            return false;
+        }
         logMessage(LOG_NOTICE, "DSTT: Flashchip ID = 0x%04x", m_flashchip);
         if (!flashchip_supported(m_flashchip))
             return false;
@@ -400,14 +457,19 @@ public:
 
     bool readFlash(uint32_t address, uint32_t length, uint8_t *buffer) {
         logMessage(LOG_INFO, "DSTT: readFlash(addr=0x%08x, size=0x%x)", address, length);
-        dstt_reset();
+        if (!dstt_reset()) {
+            return false;
+        }
 
         uint32_t i = 0;
         uint32_t end_address = address + length;
 
         while (address < end_address)
         {
-            uint32_t data = dstt_flash_command(0, address, 0);
+            uint32_t data;
+            if (!dstt_flash_command(0, address, 0, &data)) {
+                return false;
+            }
             showProgress(address+1, end_address, "Reading");
 
             buffer[i++] = (uint8_t)((data >> 0) & 0xFF);
@@ -426,13 +488,17 @@ public:
     {
         // really fucking temporary, writeFlash can only do full length writes
         // todo: read and erase properly
-        Erase_Chip();
+        if (!Erase_Chip()) {
+            return false;
+        }
         logMessage(LOG_INFO, "DSTT: writeFlash(addr=0x%08x, size=0x%x)", address, length);
 
         for(uint32_t i = 0; i < length; i++)
         {
             showProgress(i+1, length, "Writing");
-            Program_Byte(address++, buffer[i]);
+            if (!Program_Byte(address++, buffer[i])) {
+                return false;
+            }
         }
 
         return true;
@@ -450,15 +516,23 @@ public:
         }
 
         uint8_t* buffer = (uint8_t*)malloc(m_max_length);
-        readFlash(0, m_max_length, buffer);
+        if (!buffer) {
+            logMessage(LOG_ERR, "DSTT: ntrboot buffer allocation failed");
+            return false;
+        }
+        if (!readFlash(0, m_max_length, buffer)) {
+            free(buffer);
+            return false;
+        }
 
         memcpy(buffer + 0x1000, blowfish_key, 0x48);
         memcpy(buffer + 0x2000, blowfish_key + 0x48, 0x1000);
         memcpy(buffer + 0x7E00, firm, firm_size);
 
-        writeFlash(0, m_max_length, buffer);
+        const bool written = writeFlash(0, m_max_length, buffer);
+        free(buffer);
 
-        return true;
+        return written;
     }
 };
 

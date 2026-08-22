@@ -119,13 +119,20 @@ void DrawListRow(u16 *screen, int y, bool selected, u16 highlightColor, const ch
 	DrawString(screen, FONT_WIDTH, y, selected ? COLOR_BLACK : COLOR_WHITE, text);
 }
 
+void DrawTopFooterAction(const char *action)
+{
+	DrawRectangle(TOP_SCREEN, 0, SCREEN_HEIGHT - FONT_HEIGHT,
+		SCREEN_WIDTH, FONT_HEIGHT, COLOR_BLACK);
+	DrawString(TOP_SCREEN, FONT_WIDTH, SCREEN_HEIGHT - FONT_HEIGHT,
+		COLOR_YELLOW, action);
+}
+
 // Plain button-hint line, matching every other screen -- replaces a
 // permanent 3-row grey status box; version info moved to the boot screen.
 // <START> still powers off from this screen (HandlePowerOffShortcut(), called
 // from menu_lvl1's loop) -- just not advertised here, unlike the boot splash.
 void DrawFooter(int loglevel)
 {
-	DrawRectangle(TOP_SCREEN, 0, SCREEN_HEIGHT - FONT_HEIGHT, SCREEN_WIDTH, FONT_HEIGHT, COLOR_BLACK);
 	// Local copy of the level names, since the array in ntrboot_flasher's
 	// `platform.cpp` isn't visible here. The out-of-range fallback matters: the
 	// old if-chain had no else, so any level outside 0-4 left the pointer
@@ -133,7 +140,9 @@ void DrawFooter(int loglevel)
 	static const char *const loglevel_names[] = { "DEBUG", "INFO", "NOTICE", "WARN", "ERROR" };
 	const char *loglevel_str = (loglevel >= 0 && loglevel < (int)(sizeof(loglevel_names) / sizeof(loglevel_names[0])))
 		? loglevel_names[loglevel] : "?";
-	DrawStringF(TOP_SCREEN, FONT_WIDTH, SCREEN_HEIGHT - FONT_HEIGHT, COLOR_YELLOW, "<A> Select   <Y> Log: %s", loglevel_str);
+	char action[64];
+	snprintf(action, sizeof(action), "<A> Select   <Y> Log: %s", loglevel_str);
+	DrawTopFooterAction(action);
 }
 
 // Horizontally centres each line on its own width, so a multi-line string reads

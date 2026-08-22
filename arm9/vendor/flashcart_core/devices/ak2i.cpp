@@ -27,18 +27,31 @@ protected:
 
     uint32_t m_ak2i_hwrevision;
 
-    void a2ki_wait_flash_busy() {
+    bool a2ki_command(const uint8_t (&command)[8], void *response, size_t response_size,
+                      uint32_t flags, const char *operation) {
+        const ncgc::Err err = m_card->sendCommand(command, response, response_size, flags);
+        if (err) {
+            logMessage(LOG_ERR, "AK2i: %s failed: %d", operation, err.errNo());
+            return false;
+        }
+        return true;
+    }
+
+    bool a2ki_wait_flash_busy() {
         uint32_t state;
         do {
             // I've been trying to get down to the bottom of this delay for a while
             // hopefully soon it will no longer be needed.
             // ioDelay( 16 * 10 );
-            m_card->sendCommand(ak2i_cmdWaitFlashBusy, &state, 4, 4);
+            if (!a2ki_command(ak2i_cmdWaitFlashBusy, &state, 4, 4, "waitFlashBusy")) {
+                return false;
+            }
             logMessage(LOG_DEBUG, "AK2i: waitFlashBusy = 0x%08x", state);
         } while ((state & 1) != 0);
+        return true;
     }
 
-    void a2ki_read(uint8_t *outbuf, uint32_t address) {
+    bool a2ki_read(uint8_t *outbuf, uint32_t address) {
         uint8_t cmdbuf[8] = {0};
         logMessage(LOG_DEBUG, "AK2i: read(0x%08x)", address);
         memcpy(cmdbuf, ak2i_cmdReadFlash, 8);
@@ -47,11 +60,15 @@ protected:
         cmdbuf[3] = (address >>  8) & 0xFF;
         cmdbuf[4] = (address >>  0) & 0xFF;
 
-        m_card->sendCommand(cmdbuf, outbuf, 0x200, 2);
+        if (!a2ki_command(cmdbuf, outbuf, 0x200, 2, "read flash")) {
+            logMessage(LOG_ERR, "AK2i: read failed at 0x%08x", address);
+            return false;
+        }
         // a2ki_wait_flash_busy();
+        return true;
     }
 
-    void a2ki_erase(uint32_t address) {
+    bool a2ki_erase(uint32_t address) {
         uint8_t cmdbuf[8] = {0};
 
         logMessage(LOG_DEBUG, "AK2i: erase(0x%08x)", address);
@@ -69,11 +86,19 @@ protected:
         cmdbuf[2] = (address >>  8) & 0xFF;
         cmdbuf[3] = (address >>  0) & 0xFF;
 
-        m_card->sendCommand(cmdbuf, nullptr, 0, (m_ak2i_hwrevision == 0x81818181) ? 20 : 0 );
-        a2ki_wait_flash_busy();
+        if (!a2ki_command(cmdbuf, nullptr, 0,
+                          (m_ak2i_hwrevision == 0x81818181) ? 20 : 0, "erase flash")) {
+            logMessage(LOG_ERR, "AK2i: erase failed at 0x%08x", address);
+            return false;
+        }
+        if (!a2ki_wait_flash_busy()) {
+            logMessage(LOG_ERR, "AK2i: erase poll failed at 0x%08x", address);
+            return false;
+        }
+        return true;
     }
 
-    void a2ki_writebyte(uint32_t address, uint8_t value) {
+    bool a2ki_writebyte(uint32_t address, uint8_t value) {
         uint8_t cmdbuf[8] = {0};
 
         logMessage(LOG_DEBUG, "AK2i: write(0x%08x) = 0x%02x", address, value);
@@ -92,8 +117,15 @@ protected:
         cmdbuf[3] = (address >>  0) & 0xFF;
         cmdbuf[4] = value;
 
-        m_card->sendCommand(cmdbuf, nullptr, 0, 20);
-        a2ki_wait_flash_busy();
+        if (!a2ki_command(cmdbuf, nullptr, 0, 20, "write flash byte")) {
+            logMessage(LOG_ERR, "AK2i: write failed at 0x%08x", address);
+            return false;
+        }
+        if (!a2ki_wait_flash_busy()) {
+            logMessage(LOG_ERR, "AK2i: write poll failed at 0x%08x", address);
+            return false;
+        }
+        return true;
     }
 
 public:
@@ -122,22 +154,32 @@ public:
     bool initialize()
     {
         logMessage(LOG_INFO, "AK2i: Init");
-        m_card->sendCommand(ak2i_cmdGetHWRevision, &m_ak2i_hwrevision, 4, 0);
+        if (!a2ki_command(ak2i_cmdGetHWRevision, &m_ak2i_hwrevision, 4, 0,
+                          "get hardware revision")) {
+            return false;
+        }
         logMessage(LOG_NOTICE, "AK2i: HW Revision = %08x", m_ak2i_hwrevision);
 
         if (m_ak2i_hwrevision == 0x44444444)
         {
-            m_card->sendCommand(ak2i_cmdSetMapTableAddress, nullptr, 0, 0);
-            m_card->sendCommand(ak2i_cmdActiveFatMap, nullptr, 4, 0);
-            m_card->sendCommand(ak2i_cmdUnlockASIC, nullptr, 0, 0);
+            if (!a2ki_command(ak2i_cmdSetMapTableAddress, nullptr, 0, 0,
+                              "set map table address") ||
+                !a2ki_command(ak2i_cmdActiveFatMap, nullptr, 4, 0, "activate FAT map") ||
+                !a2ki_command(ak2i_cmdUnlockASIC, nullptr, 0, 0, "unlock ASIC")) {
+                return false;
+            }
         }
         else if (m_ak2i_hwrevision == 0x81818181)
         {
-            m_card->sendCommand(ak2i_cmdSetFlash1681_81, nullptr, 0, 20);
-            m_card->sendCommand(ak2i_cmdActiveFatMap, nullptr, 4, 0);
-            m_card->sendCommand(ak2i_cmdUnlockFlash, nullptr, 0, 0);
-            m_card->sendCommand(ak2i_cmdUnlockASIC, nullptr, 0, 0);
-            m_card->sendCommand(ak2i_cmdSetMapTableAddress, nullptr, 0, 0);
+            if (!a2ki_command(ak2i_cmdSetFlash1681_81, nullptr, 0, 20,
+                              "select flash 1681") ||
+                !a2ki_command(ak2i_cmdActiveFatMap, nullptr, 4, 0, "activate FAT map") ||
+                !a2ki_command(ak2i_cmdUnlockFlash, nullptr, 0, 0, "unlock flash") ||
+                !a2ki_command(ak2i_cmdUnlockASIC, nullptr, 0, 0, "unlock ASIC") ||
+                !a2ki_command(ak2i_cmdSetMapTableAddress, nullptr, 0, 0,
+                              "set map table address")) {
+                return false;
+            }
         } else {
             return false;
         }
@@ -148,21 +190,32 @@ public:
     void shutdown()
     {
         logMessage(LOG_INFO, "AK2i: Shutdown");
-        m_card->sendCommand(ak2i_cmdLockFlash, nullptr, 0, 0);
-        m_card->sendCommand(ak2i_cmdSetMapTableAddress, nullptr, 0, 0);
-        m_card->sendCommand(ak2i_cmdActiveFatMap, nullptr, 4, 4);
+        a2ki_command(ak2i_cmdLockFlash, nullptr, 0, 0, "shutdown lock flash");
+        a2ki_command(ak2i_cmdSetMapTableAddress, nullptr, 0, 0,
+                     "shutdown set map table address");
+        a2ki_command(ak2i_cmdActiveFatMap, nullptr, 4, 4, "shutdown activate FAT map");
     }
 
     bool readFlash(uint32_t address, uint32_t length, uint8_t *buffer)
     {
         logMessage(LOG_INFO, "AK2i: readFlash(addr=0x%08x, size=0x%x)", address, length);
-        m_card->sendCommand(ak2i_cmdLockFlash, nullptr, 0, 0);
+        if (!a2ki_command(ak2i_cmdLockFlash, nullptr, 0, 0, "read lock flash")) {
+            return false;
+        }
 
-        if (m_ak2i_hwrevision == 0x81818181) m_card->sendCommand(ak2i_cmdSetFlash1681_81, nullptr, 0, 20);
-        m_card->sendCommand(ak2i_cmdSetMapTableAddress, nullptr, 0, 0);
+        if (m_ak2i_hwrevision == 0x81818181 &&
+            !a2ki_command(ak2i_cmdSetFlash1681_81, nullptr, 0, 20, "read select flash 1681")) {
+            return false;
+        }
+        if (!a2ki_command(ak2i_cmdSetMapTableAddress, nullptr, 0, 0,
+                          "read set map table address")) {
+            return false;
+        }
 
         for (uint32_t curpos=0; curpos < length; curpos+=0x200) {
-            a2ki_read(buffer + curpos, address + curpos);
+            if (!a2ki_read(buffer + curpos, address + curpos)) {
+                return false;
+            }
             showProgress(curpos+1,length, "Reading");
         }
 
@@ -172,18 +225,30 @@ public:
     bool writeFlash(uint32_t address, uint32_t length, const uint8_t *buffer)
     {
         logMessage(LOG_INFO, "AK2i: writeFlash(addr=0x%08x, size=0x%x)", address, length);
-        m_card->sendCommand(ak2i_cmdUnlockFlash, nullptr, 0, 0);
-        m_card->sendCommand(ak2i_cmdUnlockASIC, nullptr, 0, 0);
+        if (!a2ki_command(ak2i_cmdUnlockFlash, nullptr, 0, 0, "write unlock flash") ||
+            !a2ki_command(ak2i_cmdUnlockASIC, nullptr, 0, 0, "write unlock ASIC")) {
+            return false;
+        }
 
-        if (m_ak2i_hwrevision == 0x81818181) m_card->sendCommand(ak2i_cmdSetFlash1681_81, nullptr, 0, 20);
-        m_card->sendCommand(ak2i_cmdSetMapTableAddress, nullptr, 0, 0);
+        if (m_ak2i_hwrevision == 0x81818181 &&
+            !a2ki_command(ak2i_cmdSetFlash1681_81, nullptr, 0, 20, "write select flash 1681")) {
+            return false;
+        }
+        if (!a2ki_command(ak2i_cmdSetMapTableAddress, nullptr, 0, 0,
+                          "write set map table address")) {
+            return false;
+        }
 
         for (uint32_t addr=0; addr < length; addr+=page_size)
         {
-            a2ki_erase(address + addr);
+            if (!a2ki_erase(address + addr)) {
+                return false;
+            }
 
             for (uint32_t i=0; i < page_size; i++) {
-                a2ki_writebyte(address + addr + i, buffer[addr + i]);
+                if (!a2ki_writebyte(address + addr + i, buffer[addr + i])) {
+                    return false;
+                }
                 showProgress(addr+i+1,length, "Writing");
             }
         }
@@ -205,18 +270,24 @@ public:
         uint8_t *buf = (uint8_t *)calloc(buf_size, sizeof(uint8_t));
 
         logMessage(LOG_INFO, "AK2i: Injecting Ntrboot");
-        readFlash(blowfish_adr, buf_size, buf); // Read in data that shouldn't be changed
+        if (!buf) {
+            logMessage(LOG_ERR, "AK2i: ntrboot buffer allocation failed");
+            return false;
+        }
+        if (!readFlash(blowfish_adr, buf_size, buf)) {
+            free(buf);
+            return false;
+        }
         memcpy(buf, blowfish_key, 0x1048);
         memcpy(buf + firm_offset, firm, firm_size);
 
         uint8_t chipid_and_length[8] = {0x00, 0x00, 0x0F, 0xC2, 0x00, 0xB4, 0x17, 0x00};
         memcpy(buf + chipid_offset, chipid_and_length, 8);
 
-        writeFlash(blowfish_adr, buf_size, buf);
-
+        const bool written = writeFlash(blowfish_adr, buf_size, buf);
         free(buf);
 
-        return true;
+        return written;
     }
 };
 
