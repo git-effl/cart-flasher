@@ -20,6 +20,18 @@ Download the latest [`cart_flasher.nds`](https://github.com/tasken/cart-flasher/
 > [!TIP]
 > Keep a copy of your first dump somewhere off the SD card. Dumping the same cart again overwrites the old file.
 
+> [!NOTE]
+> A 2 MiB Ace3DS+ with the validated AL3E layout also offers `Write banner
+> only`. It accepts only a CRC-valid, 0x840-byte NDS v1 banner `.bin`, validates
+> the complete known flash-header fingerprint and current banner layout,
+> read-modifies its two 4 KiB erase blocks while preserving neighbouring bytes,
+> and reads both full blocks back to verify them. It is unavailable for every
+> other cart layout. In
+> [DS Banner Maker](https://tasken.github.io/banner-maker/), create a new banner
+> from an image or re-edit an exported banner backup. It always downloads a
+> compatible 2,112-byte NTR v1 banner with a 32×32 icon, 15 visible colors,
+> transparent palette index 0, and valid CRC16 checks.
+
 ## Supported carts
 
 Ace3DS+, Acekard 2i, DSTT, R4i Gold 3DS, R4iSDHC family, R4 SDHC Dual-Core

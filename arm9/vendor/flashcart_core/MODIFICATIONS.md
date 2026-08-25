@@ -72,3 +72,9 @@ commit `03d464c` (tag `v1.1.0`). Changes by `@tasken`:
   The app owns the shared NDS v1 source-banner parsing; each driver must
   independently prove its target geometry and safe write path before exposing
   the action.
+- 2026-08-24 -- `devices/ace3dsplus.cpp`: added an opt-in target-geometry
+  profile for the hardware-validated 2 MiB AL3E Ace3DS+ layout. It validates
+  the complete expected flash-header fingerprint and current banner before
+  exposing the option and again before erase, read-modifies two 4 KiB blocks,
+  compares both blocks after programming, and logs each validation and write
+  decision. Other Ace3DS+ layouts remain hidden.
