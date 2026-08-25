@@ -46,6 +46,12 @@ int main(void)
 		DrawString(BOTTOM_SCREEN, FONT_WIDTH, FONT_HEIGHT * 6, COLOR_GREY, "Hardware probe");
 		LogHardwareProbe(8);
 	}
+	else {
+		platform::logMessage(LOG_NOTICE,
+			"Session start: build=%s version=%s commit=%s",
+			CART_FLASHER_BUILD_KIND, CART_FLASHER_VERSION,
+			CART_FLASHER_COMMIT);
+	}
 
 	Flashcart *cart = nullptr; //We define our main cart variable right here, and we will pass it along from function to function until the very end
 
