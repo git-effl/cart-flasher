@@ -321,6 +321,7 @@ static return_codes_t StreamFlash(flashcart_core::Flashcart* cart, const char* f
 	DrawString(TOP_SCREEN, FONT_WIDTH, 2 * FONT_HEIGHT, COLOR_WHITE, headerText);
 
 	progressCount = 0; // start the driver-side draw throttle from a known phase
+	SetProgressStatusOverride(progressLabel);
 	ShowProgress(BOTTOM_SCREEN, 0, Flash_size, progressLabel);
 
 	for (u32 chunkOffset = 0; chunkOffset < Flash_size; chunkOffset += chunkSize) {
@@ -337,12 +338,14 @@ static return_codes_t StreamFlash(flashcart_core::Flashcart* cart, const char* f
 				delete[] chunkBuffer;
 				fclose(file);
 				SetProgressOverride(0, 0); // Reset override
+				SetProgressStatusOverride(nullptr);
 				return FLASH_OP_FAILED; //Flash reading failed
 			}
 			if (fwrite(chunkBuffer, 1, currentChunkSize, file) != currentChunkSize) {
 				delete[] chunkBuffer;
 				fclose(file);
 				SetProgressOverride(0, 0); // Reset override
+				SetProgressStatusOverride(nullptr);
 				return FILE_IO_FAILED; //File writing failed
 			}
 		} else {
@@ -350,12 +353,14 @@ static return_codes_t StreamFlash(flashcart_core::Flashcart* cart, const char* f
 				delete[] chunkBuffer;
 				fclose(file);
 				SetProgressOverride(0, 0); // Reset override
+				SetProgressStatusOverride(nullptr);
 				return FILE_IO_FAILED; //File reading failed
 			}
 			if (!cart->writeFlash(chunkOffset, currentChunkSize, chunkBuffer)) {
 				delete[] chunkBuffer;
 				fclose(file);
 				SetProgressOverride(0, 0); // Reset override
+				SetProgressStatusOverride(nullptr);
 				return FLASH_OP_FAILED; //Flash writing failed
 			}
 		}
@@ -369,6 +374,7 @@ static return_codes_t StreamFlash(flashcart_core::Flashcart* cart, const char* f
 
 	SetProgressOverride(0, 0); // Reset override
 	ShowProgress(BOTTOM_SCREEN, Flash_size, Flash_size, progressLabel);
+	SetProgressStatusOverride(nullptr);
 
 	return ALL_OK;
 }
@@ -409,15 +415,24 @@ return_codes_t DumpBanner(flashcart_core::Flashcart* cart)
 		return FLASH_OP_FAILED;
 	}
 	if (mount_fat() != ALL_OK) { return FAT_MOUNT_FAILED; }
+	DrawRectangle(TOP_SCREEN, 0, 2 * FONT_HEIGHT, SCREEN_WIDTH,
+		SCREEN_HEIGHT - 2 * FONT_HEIGHT, COLOR_BLACK);
+	DrawString(TOP_SCREEN, FONT_WIDTH, 2 * FONT_HEIGHT, COLOR_WHITE,
+		"Backing up and validating the DS banner...");
+	progressCount = 0;
+	SetProgressStatusOverride("Backing up DS banner");
+	ShowProgress(BOTTOM_SCREEN, 0, 1, "Backing up DS banner");
 
 	uint8_t* const banner = new(std::nothrow) uint8_t[banner_ops::kSourceBannerSize];
 	if (!banner) {
 		flashcart_core::platform::logMessage(flashcart_core::LOG_ERR,
 			"DumpBanner: banner buffer allocation failed");
+		SetProgressStatusOverride(nullptr);
 		return MEM_ALLOC_FAILED;
 	}
 	if (!banner_ops::ReadBanner(cart, banner, banner_ops::kSourceBannerSize)) {
 		delete[] banner;
+		SetProgressStatusOverride(nullptr);
 		return FLASH_OP_FAILED;
 	}
 
@@ -427,6 +442,7 @@ return_codes_t DumpBanner(flashcart_core::Flashcart* cart)
 		flashcart_core::platform::logMessage(flashcart_core::LOG_ERR,
 			"DumpBanner: driver returned an invalid v1 banner");
 		delete[] banner;
+		SetProgressStatusOverride(nullptr);
 		return BannerValidationResult(validation);
 	}
 
@@ -435,6 +451,7 @@ return_codes_t DumpBanner(flashcart_core::Flashcart* cart)
 		flashcart_core::platform::logMessage(flashcart_core::LOG_ERR,
 			"DumpBanner: couldn't choose a new backup path");
 		delete[] banner;
+		SetProgressStatusOverride(nullptr);
 		return FILE_OPEN_FAILED;
 	}
 	FILE* file = fopen(path, "wb");
@@ -442,6 +459,7 @@ return_codes_t DumpBanner(flashcart_core::Flashcart* cart)
 		flashcart_core::platform::logMessage(flashcart_core::LOG_ERR,
 			"DumpBanner: couldn't create %s", path);
 		delete[] banner;
+		SetProgressStatusOverride(nullptr);
 		return FILE_OPEN_FAILED;
 	}
 	const bool wrote = fwrite(banner, 1, banner_ops::kSourceBannerSize, file)
@@ -452,11 +470,14 @@ return_codes_t DumpBanner(flashcart_core::Flashcart* cart)
 			"DumpBanner: couldn't finish %s", path);
 		delete[] banner;
 		remove(path);
+		SetProgressStatusOverride(nullptr);
 		return FILE_IO_FAILED;
 	}
 	delete[] banner;
 	flashcart_core::platform::logMessage(flashcart_core::LOG_NOTICE,
 		"DumpBanner: saved validated v1 banner to %s", path);
+	ShowProgress(BOTTOM_SCREEN, 1, 1, "Backing up DS banner");
+	SetProgressStatusOverride(nullptr);
 	return ALL_OK;
 }
 
@@ -486,13 +507,13 @@ return_codes_t ValidateFlashImage(flashcart_core::Flashcart* cart, const char* f
 		return FILE_IO_FAILED;
 	}
 	const long fileSize = ftell(file);
-	fclose(file);
 	if (fileSize < 0 || static_cast<size_t>(fileSize) < flashSize) {
 		flashcart_core::platform::logMessage(flashcart_core::LOG_ERR,
 			"FlashImage: expected at least %lu bytes, got %ld",
 			static_cast<unsigned long>(flashSize), fileSize);
 		return FLASH_IMAGE_INVALID;
 	}
+	fclose(file);
 
 	// Some supported carts have historical oversized backups. Their leading
 	// flashSize bytes remain a valid restore image, so only reject truncation.
@@ -608,16 +629,20 @@ return_codes_t WriteBanner(flashcart_core::Flashcart* cart, const char* filepath
 		SCREEN_HEIGHT - 2 * FONT_HEIGHT, COLOR_BLACK);
 	DrawString(TOP_SCREEN, FONT_WIDTH, 2 * FONT_HEIGHT, COLOR_WHITE,
 		"Writing and verifying the banner...");
-	ShowProgress(BOTTOM_SCREEN, 0, 1, "Writing banner");
+	progressCount = 0;
+	SetProgressStatusOverride("Writing DS banner");
+	ShowProgress(BOTTOM_SCREEN, 0, 1, "Writing DS banner");
 
 	const bool written = banner_ops::WriteBanner(cart, banner, bannerSize);
 	delete[] banner;
 	if (!written) {
+		SetProgressStatusOverride(nullptr);
 		return FLASH_OP_FAILED;
 	}
 
 	flashcart_core::platform::logMessage(flashcart_core::LOG_NOTICE,
 		"WriteBanner: completed");
-	ShowProgress(BOTTOM_SCREEN, 1, 1, "Writing banner");
+	ShowProgress(BOTTOM_SCREEN, 1, 1, "Writing DS banner");
+	SetProgressStatusOverride(nullptr);
 	return ALL_OK;
 }

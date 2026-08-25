@@ -42,6 +42,17 @@ constexpr std::uint32_t kR4BlockStart = 0x1A6000;
 constexpr std::uint32_t kR4BlockSize = 0x1000;
 constexpr std::uint64_t kR4HeaderFingerprint = 0x67E10B79824109C0ULL;
 
+std::uint32_t AceCapacityBytes(std::uint8_t capacity) {
+    switch (capacity) {
+        case 0x14:
+            return 0x100000;
+        case 0x15:
+            return 0x200000;
+        default:
+            return 0;
+    }
+}
+
 Profile ProfileForCart(Flashcart *cart) {
     if (std::strcmp(cart->getShortName(), "Ace3DSPlus") == 0) {
         return Profile::Ace3DSAl3e;
@@ -50,22 +61,6 @@ Profile ProfileForCart(Flashcart *cart) {
         return Profile::R4iSdhc20xx;
     }
     return Profile::None;
-}
-
-bool ReadFlashQuiet(Flashcart *cart, std::uint32_t address,
-                    std::uint32_t length, std::uint8_t *buffer) {
-    SetDriverProgressSuppressed(true);
-    const bool result = cart->readFlash(address, length, buffer);
-    SetDriverProgressSuppressed(false);
-    return result;
-}
-
-bool WriteFlashQuiet(Flashcart *cart, std::uint32_t address,
-                     std::uint32_t length, const std::uint8_t *buffer) {
-    SetDriverProgressSuppressed(true);
-    const bool result = cart->writeFlash(address, length, buffer);
-    SetDriverProgressSuppressed(false);
-    return result;
 }
 
 std::uint16_t Crc16(const std::uint8_t *data, size_t size) {
@@ -94,7 +89,17 @@ std::uint32_t AceMapEntry(const std::uint8_t *map, std::uint32_t index) {
 }
 
 bool ResolveAceLayout(Flashcart *cart) {
-    if (cart->getFlashCapacityCode() != 0x15) {
+    const std::uint8_t capacity = cart->getFlashCapacityCode();
+    const std::uint32_t capacityBytes = AceCapacityBytes(capacity);
+    if (capacityBytes == 0) {
+        logMessage(LOG_NOTICE,
+            "Ace3DSPlus banner: requires known 1 MiB or 2 MiB flash, got %02X; option disabled",
+            static_cast<unsigned>(capacity));
+        return false;
+    }
+    if (kAceBlockStart + kAceBlockRange > capacityBytes) {
+        logMessage(LOG_NOTICE,
+            "Ace3DSPlus banner: banner pages exceed selected chip capacity; option disabled");
         return false;
     }
 
@@ -103,7 +108,7 @@ bool ResolveAceLayout(Flashcart *cart) {
         logMessage(LOG_ERR, "Ace3DSPlus banner: page-map buffer unavailable");
         return false;
     }
-    if (!ReadFlashQuiet(cart, 0, kAceMapSize, map)) {
+    if (!cart->readFlash(0, kAceMapSize, map)) {
         delete[] map;
         logMessage(LOG_NOTICE, "Ace3DSPlus banner: page-map read failed; option disabled");
         return false;
@@ -129,7 +134,7 @@ bool ResolveAceLayout(Flashcart *cart) {
     }
 
     std::uint8_t header[0x200];
-    if (!ReadFlashQuiet(cart, headerOffset, sizeof(header), header)) {
+    if (!cart->readFlash(headerOffset, sizeof(header), header)) {
         logMessage(LOG_NOTICE, "Ace3DSPlus banner: target header read failed; option disabled");
         return false;
     }
@@ -230,7 +235,7 @@ bool ValidateAceTarget(Flashcart *cart, bool announce) {
         return false;
     }
     std::uint8_t banner[kSourceBannerSize];
-    if (!ReadFlashQuiet(cart, kAceBannerOffset, sizeof(banner), banner)) {
+    if (!cart->readFlash(kAceBannerOffset, sizeof(banner), banner)) {
         logMessage(LOG_NOTICE, "Ace3DSPlus banner: target banner read failed; option disabled");
         return false;
     }
@@ -245,14 +250,18 @@ bool ValidateAceTarget(Flashcart *cart, bool announce) {
         return false;
     }
     if (announce) {
-        logMessage(LOG_NOTICE, "Ace3DSPlus banner: target geometry verified");
+        const std::uint32_t capacityBytes = AceCapacityBytes(
+            cart->getFlashCapacityCode());
+        logMessage(LOG_NOTICE,
+            "Ace3DSPlus banner: target geometry verified (%lu KiB selected chip)",
+            static_cast<unsigned long>(capacityBytes / 1024));
     }
     return true;
 }
 
 bool ValidateR4Target(Flashcart *cart, TargetFormat *format, bool announce) {
     std::uint8_t header[0x200];
-    if (!ReadFlashQuiet(cart, kR4HeaderOffset, sizeof(header), header)) {
+    if (!cart->readFlash(kR4HeaderOffset, sizeof(header), header)) {
         logMessage(LOG_NOTICE, "r4isdhc banner: target header read failed; option disabled");
         return false;
     }
@@ -261,7 +270,7 @@ bool ValidateR4Target(Flashcart *cart, TargetFormat *format, bool announce) {
         return false;
     }
     std::uint8_t banner[kR4TargetBannerSize];
-    if (!ReadFlashQuiet(cart, kR4BannerOffset, sizeof(banner), banner)) {
+    if (!cart->readFlash(kR4BannerOffset, sizeof(banner), banner)) {
         logMessage(LOG_NOTICE, "r4isdhc banner: target banner read failed; option disabled");
         return false;
     }
@@ -294,16 +303,26 @@ SourceValidation ValidateSourceBanner(const std::uint8_t *banner, size_t size) {
 }
 
 bool HasAvailableOperation(Flashcart *cart) {
+    // This runs while the operation menu is opening and again during source
+    // preflight. It is a short passive geometry check, not user-visible work;
+    // let actual backup/write operations retain normal driver progress without
+    // briefly drawing over the menu's bottom context pane.
+    SetDriverProgressSuppressed(true);
+    bool available = false;
     switch (ProfileForCart(cart)) {
         case Profile::Ace3DSAl3e:
-            return ValidateAceTarget(cart, true);
+            available = ValidateAceTarget(cart, true);
+            break;
         case Profile::R4iSdhc20xx: {
             TargetFormat format;
-            return ValidateR4Target(cart, &format, true);
+            available = ValidateR4Target(cart, &format, true);
+            break;
         }
         default:
-            return false;
+            break;
     }
+    SetDriverProgressSuppressed(false);
+    return available;
 }
 
 bool ReadBanner(Flashcart *cart, std::uint8_t *banner, std::uint32_t bannerSize) {
@@ -313,7 +332,7 @@ bool ReadBanner(Flashcart *cart, std::uint8_t *banner, std::uint32_t bannerSize)
     switch (ProfileForCart(cart)) {
         case Profile::Ace3DSAl3e:
             if (!ValidateAceTarget(cart, false)
-                || !ReadFlashQuiet(cart, kAceBannerOffset, bannerSize, banner)) {
+                || !cart->readFlash(kAceBannerOffset, bannerSize, banner)) {
                 return false;
             }
             logMessage(LOG_NOTICE, "Ace3DSPlus banner: exported current v1 banner");
@@ -324,7 +343,7 @@ bool ReadBanner(Flashcart *cart, std::uint8_t *banner, std::uint32_t bannerSize)
                 return false;
             }
             std::uint8_t target[kR4TargetBannerSize];
-            if (!ReadFlashQuiet(cart, kR4BannerOffset, sizeof(target), target)) {
+            if (!cart->readFlash(kR4BannerOffset, sizeof(target), target)) {
                 return false;
             }
             std::memcpy(banner, target, bannerSize);
@@ -362,7 +381,7 @@ bool WriteBanner(Flashcart *cart, const std::uint8_t *banner,
                 logMessage(LOG_ERR, "Ace3DSPlus banner: verification buffers unavailable");
                 return false;
             }
-            if (!ReadFlashQuiet(cart, kAceBlockStart, kAceBlockRange, expected)) {
+            if (!cart->readFlash(kAceBlockStart, kAceBlockRange, expected)) {
                 delete[] expected;
                 delete[] verified;
                 return false;
@@ -372,10 +391,10 @@ bool WriteBanner(Flashcart *cart, const std::uint8_t *banner,
             logMessage(LOG_NOTICE, "Ace3DSPlus banner: writing blocks %08lX-%08lX",
                 static_cast<unsigned long>(kAceBlockStart),
                 static_cast<unsigned long>(kAceBlockStart + kAceBlockRange - 1));
-            const bool written = WriteFlashQuiet(cart, kAceBlockStart, kAceBlockRange,
+            const bool written = cart->writeFlash(kAceBlockStart, kAceBlockRange,
                 expected);
             const bool verifiedOk = written
-                && ReadFlashQuiet(cart, kAceBlockStart, kAceBlockRange, verified)
+                && cart->readFlash(kAceBlockStart, kAceBlockRange, verified)
                 && std::memcmp(expected, verified, kAceBlockRange) == 0;
             delete[] expected;
             delete[] verified;
@@ -401,7 +420,7 @@ bool WriteBanner(Flashcart *cart, const std::uint8_t *banner,
                 logMessage(LOG_ERR, "r4isdhc banner: verification buffers unavailable");
                 return false;
             }
-            if (!ReadFlashQuiet(cart, kR4BlockStart, affectedSize, expected)) {
+            if (!cart->readFlash(kR4BlockStart, affectedSize, expected)) {
                 delete[] expected;
                 delete[] verified;
                 return false;
@@ -421,10 +440,10 @@ bool WriteBanner(Flashcart *cart, const std::uint8_t *banner,
                     static_cast<unsigned long>(kR4BlockStart),
                     static_cast<unsigned long>(kR4BlockStart + affectedSize - 1));
             }
-            const bool written = WriteFlashQuiet(cart, kR4BlockStart, affectedSize,
+            const bool written = cart->writeFlash(kR4BlockStart, affectedSize,
                 expected);
             const bool verifiedOk = written
-                && ReadFlashQuiet(cart, kR4BlockStart, affectedSize, verified)
+                && cart->readFlash(kR4BlockStart, affectedSize, verified)
                 && std::memcmp(expected, verified, affectedSize) == 0;
             delete[] expected;
             delete[] verified;

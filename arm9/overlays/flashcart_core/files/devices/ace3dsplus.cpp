@@ -1,6 +1,5 @@
-// Modified from ntrteam/flashcart_core by @tasken (2026): removed the post-init
-// RDID==0xFFFFFF failure guard so Macronix "sleeping flash" clones are accepted.
-// See ../MODIFICATIONS.md. Original licensed under GPLv3 (see ../LICENSE).
+// Cart-Flasher overlays this upstream file at build time. Original licensed
+// under GPLv3 (see ../LICENSE).
 
 #include <cstring>
 
@@ -495,6 +494,19 @@ public:
             " * r4isdhc.com.cn\n"
             " * Certain Gateway Blue cards\n"
             " * Clones with sleeping flash (Macronix)";
+    }
+
+    size_t getMaxLength() override {
+        switch (m_flashCapacity) {
+            case 0x14:
+                return 0x100000;
+            case 0x15:
+                return 0x200000;
+            case 0x16:
+                return 0x400000;
+            default:
+                return 0;
+        }
     }
 
     bool hasRecoveryProfile() const override {

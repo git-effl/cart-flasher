@@ -57,6 +57,7 @@ void DrawListRow(u16 *screen, int y, bool selected, u16 highlightColor, const ch
 void DrawTopFooterAction(const char *action);
 
 void SetProgressOverride(uint32_t current, uint32_t total);
+void SetProgressStatusOverride(const char *status);
 void ShowProgress(u16 *screen, uint32_t current, uint32_t total, const char* status);
 void DrawHeader(u16* screen, const char *str);
 void DrawFooter(int loglevel);

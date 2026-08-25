@@ -219,11 +219,17 @@ void DrawStringF(u16 *screen, int x, int y, u16 color, const char *format, ...)
 
 uint32_t progress_current_override = 0;
 uint32_t progress_total_override = 0;
+const char *progress_status_override = nullptr;
 
 void SetProgressOverride(uint32_t current, uint32_t total)
 {
 	progress_current_override = current;
 	progress_total_override = total;
+}
+
+void SetProgressStatusOverride(const char *status)
+{
+	progress_status_override = status;
 }
 
 //https://github.com/ntrteam/ntrboot_flasher/blob/master/source/common/ui.cpp#L201
@@ -241,6 +247,7 @@ void ShowProgress(u16 *screen, uint32_t current, uint32_t total, const char* sta
 	// Apply overrides
 	if (progress_total_override) total = progress_total_override;
 	current += progress_current_override;
+	if (progress_status_override) status = progress_status_override;
 	// Clamp instead of zeroing: an overshooting caller must not rewind the bar.
 	if (current > total) current = total;
 
