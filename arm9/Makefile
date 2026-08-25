@@ -3,6 +3,8 @@
 # SPDX-FileContributor: Antonio Niño Díaz, 2023
 
 export BLOCKSDS			?= /opt/blocksds/core
+TARGET			?= cart_flasher
+.DEFAULT_GOAL		:= all
 
 LIBNCGC := $(CURDIR)/vendor/libncgc
 
@@ -64,8 +66,15 @@ endif
 
 SOURCES_S	:= $(shell find -L $(SOURCEDIRS) -name "*.s")
 SOURCES_C	:= $(shell find -L $(SOURCEDIRS) -name "*.c")
-SOURCES_CPP	:= $(shell find -L $(SOURCEDIRS) -name "*.cpp") $(FLASHCART_CORE_SOURCES)
-SOURCES_BIN	:= $(shell find -L $(DATA) -name "*.*")
+SOURCES_CPP	:= $(filter-out source/debug_simulated_cart.cpp, $(shell find -L $(SOURCEDIRS) -name "*.cpp")) $(FLASHCART_CORE_SOURCES)
+SOURCES_BIN	:= $(filter-out data/debug_simulated_banner.bin, $(shell find -L $(DATA) -name "*.*"))
+
+ifeq ($(CART_FLASHER_BUILD_KIND),Debug)
+DEFINES += -DCART_FLASHER_DEBUG_SIM=1
+SOURCES_CPP += source/debug_simulated_cart.cpp
+SOURCES_BIN += data/debug_simulated_banner.bin
+$(BUILDDIR)/source/debug_simulated_cart.cpp.o: $(BUILDDIR)/data/debug_simulated_banner.bin.o
+endif
 
 ARCH		:= -marm -mthumb-interwork -march=armv5te -mtune=arm946e-s
 SPECS		:= $(BLOCKSDS)/sys/crts/ds_arm9.specs

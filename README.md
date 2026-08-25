@@ -15,34 +15,40 @@ Download the latest [`cart_flasher.nds`](https://github.com/tasken/cart-flasher/
 1. Select your cart in the cart list.
 1. To save a copy of your cart, select `Back up flash`, then press `A` to start. Your dump is saved to `cart-backups` on the SD card.
 1. To write a flashrom back, select `Write flash`, pick your `.bin` file, then input the key combo to proceed.
+1. When available for your cart, select `Back up DS banner` to save a reusable banner in `cart-backups/banners`.
+1. Select `Write DS banner`, choose a banner from `cart-backups/banners`, then input the key combo to apply it.
 1. Wait until the progress bar finishes, then press `A`.
 
 > [!TIP]
 > Keep a copy of your first dump somewhere off the SD card. Dumping the same cart again overwrites the old file.
 
 > [!NOTE]
-> An Ace3DS+ with the validated AL3E layout also offers `Write banner only`.
-> It accepts only a CRC-valid, 0x840-byte NDS v1 banner `.bin`, validates the
-> known primary page map, the header's virtual banner pointer, current banner
-> layout, and selected chip capacity, then read-modifies its two 4 KiB erase
-> blocks while preserving neighbouring bytes and reads both full blocks back to
-> verify them. It is unavailable for every other cart layout. In
+> An Ace3DS+ with the validated AL3E layout also offers `Back up DS banner` and
+> `Write DS banner`. The writer accepts only a CRC-valid, 0x840-byte NDS v1
+> banner `.bin`, validates the known primary page map, the header's virtual
+> banner pointer, current banner layout, and selected chip capacity, then
+> read-modifies its two 4 KiB erase blocks while preserving neighbouring bytes
+> and reads both full blocks back to verify them. It is unavailable for every
+> other cart layout. In
 > [DS Banner Maker](https://tasken.github.io/banner-maker/), create a new banner
 > from an image or re-edit an exported banner backup. It always downloads a
 > compatible 2,112-byte NTR v1 banner with a 32×32 icon, 15 visible colors,
 > transparent palette index 0, and valid CRC16 checks.
-> `Back up DS banner` saves the current reusable v1 banner to `/cart-backups`
-> without replacing an earlier banner backup.
+> `Back up DS banner` saves a reusable v1 banner as
+> `/cart-backups/banners/Ace3DSPlus-banner.bin`, preserving earlier backups with
+> numbered suffixes. `Write DS banner` opens that same folder.
 
 > [!NOTE]
-> The same `Write banner only` action is offered for the exact 2 MiB
-> R4iSDHC.com 20XX layout. It verifies the complete expected Bomberman header
-> and current v3 stock or valid v1 custom banner before exposing the action,
-> then replaces only the v1-sized banner prefix and verifies the complete
-> 4 KiB erase block. A v3-to-v1 change also clears the unused v3 extension.
-> A valid v1 custom banner remains eligible for later banner changes.
+> The same `Back up DS banner` and `Write DS banner` actions are offered for
+> the exact 2 MiB R4iSDHC.com 20XX layout. It verifies the complete expected
+> Bomberman header and current v3 stock or valid v1 custom banner before
+> exposing the action, then replaces only the v1-sized banner prefix and
+> verifies every affected 4 KiB block. A v3-to-v1 change also clears the unused
+> v3 extension through the next block. A valid v1 custom banner remains
+> eligible for later banner changes.
 > `Back up DS banner` exports a reusable v1 copy of either the stock v3 or
-> current v1 banner.
+> current v1 banner as `/cart-backups/banners/r4isdhc-banner.bin`. `Write DS
+> banner` opens that same folder.
 
 ## Supported carts
 
@@ -76,7 +82,7 @@ Replay DS).
 
 1. Press `Y` on the cart list until the log reads `DEBUG`.
 1. Do the thing that went wrong again.
-1. Power off, and grab `cart_flasher.log` from the root of your SD card.
+1. Power off, and grab `cart-backups/cart_flasher.log` from your SD card.
 1. [Open an issue](https://github.com/tasken/Cart-Flasher/issues) with the log attached, which cart you have, and how you launched Cart-Flasher.
 
 > [!NOTE]
@@ -95,6 +101,11 @@ Nightlies are `cart_flasher-nightly-<commit>.nds`; releases are `cart_flasher.nd
 have BlocksDS installed locally, run `git submodule update --init --recursive`
 once, then `make` works directly without Docker. `build.sh` initializes the
 pinned `flashcart_core` submodule itself before starting Docker.
+
+Local builds use build kind `Debug` and include a software-only simulated cart.
+It exercises full flash and DS banner operations with deterministic data,
+starts with the Cart-Flasher DS banner, and never sends Slot-1 commands.
+Nightly and release builds use explicit non-Debug kinds and never include it.
 
 ## Credits
 

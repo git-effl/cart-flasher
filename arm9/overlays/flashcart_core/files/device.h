@@ -47,6 +47,7 @@ public:
     virtual bool readFlash(uint32_t address, uint32_t length, uint8_t *buffer) = 0;
     virtual bool writeFlash(uint32_t address, uint32_t length, const uint8_t *buffer) = 0;
     virtual bool injectNtrBoot(uint8_t *blowfish_key, uint8_t *firm, uint32_t firm_size) = 0;
+    virtual bool requiresCardInitialization() const { return true; }
     // Most drivers expose their maximum length statically. Ace3DS-family
     // hardware needs its RDID capacity code for app-side safety profiles to
     // distinguish its 1 MiB and 2 MiB flash variants.

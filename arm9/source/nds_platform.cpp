@@ -43,11 +43,13 @@ return_codes_t mount_fat(void) {
 	if(!file_exists("sd:/") && !file_exists("fat:/")) {
 		if (fatInitDefault()) {
 			mkdir("/cart-backups", 0777);
+			mkdir("/cart-backups/banners", 0777);
 			return ALL_OK;
 		}
 		return FAT_MOUNT_FAILED;
 	}
 	mkdir("/cart-backups", 0777);
+	mkdir("/cart-backups/banners", 0777);
 	return ALL_OK;
 }
 
@@ -78,7 +80,8 @@ namespace flashcart_core {
 			ShowProgress(BOTTOM_SCREEN, current, total, status);
 		}
 
-		// Opens /cart_flasher.log for one or more writeLogLine() calls sharing a
+		// Opens /cart-backups/cart_flasher.log for one or more writeLogLine()
+		// calls sharing a
 		// single open/close bracket. logMessage() below opens/closes once per
 		// call, which is fine for isolated calls -- but LogHardwareProbe()'s
 		// three related lines land close enough together that BlocksDS's FatFs
@@ -106,7 +109,8 @@ namespace flashcart_core {
 			// testing. Keeping the file open (tried first) left the log's
 			// reported size at 0 bytes forever.
 			static bool first_open = true;
-			FILE *logfile = fopen("/cart_flasher.log", first_open ? "w" : "a");
+			FILE *logfile = fopen("/cart-backups/cart_flasher.log",
+				first_open ? "w" : "a");
 			if (logfile) { first_open = false; }
 			return logfile;
 		}
@@ -388,7 +392,7 @@ return_codes_t DumpFlash(flashcart_core::Flashcart* cart)
 }
 
 static bool BannerBackupPath(const char *cartName, char *path, size_t pathSize) {
-	if (snprintf(path, pathSize, "/cart-backups/%s-banner.bin", cartName)
+	if (snprintf(path, pathSize, "/cart-backups/banners/%s-banner.bin", cartName)
 		>= static_cast<int>(pathSize)) {
 		return false;
 	}
@@ -396,7 +400,7 @@ static bool BannerBackupPath(const char *cartName, char *path, size_t pathSize) 
 		return true;
 	}
 	for (unsigned int suffix = 2; suffix <= 99; ++suffix) {
-		if (snprintf(path, pathSize, "/cart-backups/%s-banner-%u.bin",
+		if (snprintf(path, pathSize, "/cart-backups/banners/%s-banner-%u.bin",
 				cartName, suffix) >= static_cast<int>(pathSize)) {
 			return false;
 		}

@@ -354,7 +354,10 @@ void menu_lvl1(Flashcart* cart)
 			DrawRectangle(TOP_SCREEN, 0, SCREEN_HEIGHT - FONT_HEIGHT, SCREEN_WIDTH, FONT_HEIGHT, COLOR_BLACK);
 			DrawStringF(TOP_SCREEN, FONT_WIDTH, errorRow * FONT_HEIGHT, COLOR_CYAN, "Detecting %s...", cart->getName());
 
-			if (isDSiMode() || strcmp(cart->getShortName(), "DSTT") == 0) {
+			if (!cart->requiresCardInitialization()) {
+				// App-owned debug carts exercise UI/filesystem flows without
+				// touching the physical Slot-1 bus.
+			} else if (isDSiMode() || strcmp(cart->getShortName(), "DSTT") == 0) {
 				// __ncgc_must_check. Not fatal here -- initialize() below fails
 				// too and shows the detection error -- but the reason only
 				// exists here, so log it instead of discarding it.
@@ -437,11 +440,13 @@ void menu_lvl2(Flashcart* cart)
 		// underneath them) actually changed, not every single frame — redrawing
 		// full-width rectangles unconditionally with no vsync tears visibly.
 		if (dirty) {
-			DrawListRow(TOP_SCREEN, 2 * FONT_HEIGHT, menu_sel == 0, COLOR_ACCENT, "Back up flash");	//0
-			DrawListRow(TOP_SCREEN, 3 * FONT_HEIGHT, menu_sel == 1, COLOR_TINTEDRED, "Write flash");	//1
+			DrawString(TOP_SCREEN, FONT_WIDTH, 2 * FONT_HEIGHT, COLOR_GREY, "Cart operations");
+			DrawListRow(TOP_SCREEN, 3 * FONT_HEIGHT, menu_sel == 0, COLOR_ACCENT, "Back up flash");	//0
+			DrawListRow(TOP_SCREEN, 4 * FONT_HEIGHT, menu_sel == 1, COLOR_TINTEDRED, "Write flash");	//1
 			if (hasBannerTools) {
-				DrawListRow(TOP_SCREEN, 4 * FONT_HEIGHT, menu_sel == 2, COLOR_ACCENT, "Back up DS banner");	//2
-				DrawListRow(TOP_SCREEN, 5 * FONT_HEIGHT, menu_sel == 3, COLOR_TINTEDRED, "Write DS banner");	//3
+				DrawString(TOP_SCREEN, FONT_WIDTH, 6 * FONT_HEIGHT, COLOR_GREY, "DS banner operations");
+				DrawListRow(TOP_SCREEN, 7 * FONT_HEIGHT, menu_sel == 2, COLOR_ACCENT, "Back up DS banner");	//2
+				DrawListRow(TOP_SCREEN, 8 * FONT_HEIGHT, menu_sel == 3, COLOR_TINTEDRED, "Write DS banner");	//3
 			}
 			dirty = false;
 		}
@@ -471,7 +476,7 @@ void menu_lvl2(Flashcart* cart)
 			const bool isBannerBackup = hasBannerTools && menu_sel == 2;
 			const bool isBannerWrite = hasBannerTools && menu_sel == 3;
 			if (!isBackup && !isBannerBackup) {
-				if (!BrowseForFile(isBannerWrite ? "/" : "/cart-backups", ".bin",
+				if (!BrowseForFile(isBannerWrite ? "/cart-backups/banners" : "/cart-backups", ".bin",
 					isBannerWrite ? "Pick a .bin banner" : "Pick a flash image",
 					writePath, sizeof(writePath))) {
 					DrawHeader(TOP_SCREEN, cart->getName());
@@ -541,7 +546,7 @@ void menu_lvl2(Flashcart* cart)
 			{
 				DrawString(TOP_SCREEN, FONT_WIDTH, 2 * FONT_HEIGHT, COLOR_WHITE,
 					"Save a reusable copy of this cart's\n"
-					"DS banner to /cart-backups.\n\n"
+					"DS banner to /cart-backups/banners.\n\n"
 					"Nothing is written to the cart.");
 				DrawTopFooterAction("<A> Save banner   <B> Cancel");
 				confirmed = WaitConfirm();
@@ -684,7 +689,8 @@ void menu_lvl2(Flashcart* cart)
 								COLOR_GREEN, "<A> Continue");
 						} else if (isBannerBackup) {
 							DrawTopStatus("Banner backup complete",
-								"Your DS banner was saved to\n/cart-backups.",
+								"Your DS banner was saved to\n"
+								"/cart-backups/banners.",
 								COLOR_GREEN, "<A> Continue");
 						} else if (isBannerWrite) {
 							DrawTopStatus("Banner updated",

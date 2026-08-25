@@ -18,6 +18,7 @@ enum class Profile {
     None,
     Ace3DSAl3e,
     R4iSdhc20xx,
+    DebugSimulated,
 };
 
 enum class TargetFormat {
@@ -42,6 +43,9 @@ constexpr std::uint32_t kR4BlockStart = 0x1A6000;
 constexpr std::uint32_t kR4BlockSize = 0x1000;
 constexpr std::uint64_t kR4HeaderFingerprint = 0x67E10B79824109C0ULL;
 
+constexpr std::uint32_t kDebugBannerOffset = 0x5000;
+constexpr std::uint32_t kDebugBlockSize = 0x1000;
+
 std::uint32_t AceCapacityBytes(std::uint8_t capacity) {
     switch (capacity) {
         case 0x14:
@@ -59,6 +63,9 @@ Profile ProfileForCart(Flashcart *cart) {
     }
     if (std::strcmp(cart->getShortName(), "r4isdhc") == 0) {
         return Profile::R4iSdhc20xx;
+    }
+    if (std::strcmp(cart->getShortName(), "debug-simulated") == 0) {
+        return Profile::DebugSimulated;
     }
     return Profile::None;
 }
@@ -287,6 +294,25 @@ bool ValidateR4Target(Flashcart *cart, TargetFormat *format, bool announce) {
     return true;
 }
 
+bool ValidateDebugTarget(Flashcart *cart, bool announce) {
+    std::uint8_t banner[kSourceBannerSize];
+    if (!cart->readFlash(kDebugBannerOffset, sizeof(banner), banner)) {
+        logMessage(LOG_ERR,
+            "DebugSim banner: target banner read failed");
+        return false;
+    }
+    if (ValidateSourceBanner(banner, sizeof(banner)) != SourceValidation::Valid) {
+        logMessage(LOG_ERR,
+            "DebugSim banner: target banner is invalid");
+        return false;
+    }
+    if (announce) {
+        logMessage(LOG_NOTICE,
+            "DebugSim banner: target geometry verified");
+    }
+    return true;
+}
+
 } // namespace
 
 SourceValidation ValidateSourceBanner(const std::uint8_t *banner, size_t size) {
@@ -318,6 +344,9 @@ bool HasAvailableOperation(Flashcart *cart) {
             available = ValidateR4Target(cart, &format, true);
             break;
         }
+        case Profile::DebugSimulated:
+            available = ValidateDebugTarget(cart, true);
+            break;
         default:
             break;
     }
@@ -358,6 +387,14 @@ bool ReadBanner(Flashcart *cart, std::uint8_t *banner, std::uint32_t bannerSize)
                 format == TargetFormat::V3 ? 3 : 1);
             return true;
         }
+        case Profile::DebugSimulated:
+            if (!ValidateDebugTarget(cart, false)
+                || !cart->readFlash(kDebugBannerOffset, bannerSize, banner)) {
+                return false;
+            }
+            logMessage(LOG_NOTICE,
+                "DebugSim banner: exported current v1 banner");
+            return true;
         default:
             return false;
     }
@@ -452,6 +489,31 @@ bool WriteBanner(Flashcart *cart, const std::uint8_t *banner,
                 return false;
             }
             logMessage(LOG_NOTICE, "r4isdhc banner: write verified");
+            return true;
+        }
+        case Profile::DebugSimulated: {
+            if (!ValidateDebugTarget(cart, false)) {
+                return false;
+            }
+            std::uint8_t expected[kDebugBlockSize];
+            std::uint8_t verified[kDebugBlockSize];
+            if (!cart->readFlash(kDebugBannerOffset, kDebugBlockSize, expected)) {
+                return false;
+            }
+            std::memcpy(expected, banner, bannerSize);
+            logMessage(LOG_NOTICE,
+                "DebugSim banner: writing block %08lX-%08lX",
+                static_cast<unsigned long>(kDebugBannerOffset),
+                static_cast<unsigned long>(kDebugBannerOffset + kDebugBlockSize - 1));
+            if (!cart->writeFlash(kDebugBannerOffset, kDebugBlockSize, expected)
+                || !cart->readFlash(kDebugBannerOffset, kDebugBlockSize, verified)
+                || std::memcmp(expected, verified, kDebugBlockSize) != 0) {
+                logMessage(LOG_ERR,
+                    "DebugSim banner: block verification failed");
+                return false;
+            }
+            logMessage(LOG_NOTICE,
+                "DebugSim banner: write verified");
             return true;
         }
         default:

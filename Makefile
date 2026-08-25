@@ -17,8 +17,9 @@ export CART_FLASHER_VERSION
 export NDS_OUT := $(TARGET)-dev.nds
 export TOPDIR := $(CURDIR)
 
-# Build provenance shown in-app. CI overrides this on the command line.
-CART_FLASHER_BUILD_KIND ?= Dev
+# Build provenance shown in-app. Local builds are Debug and include the
+# software simulator; CI overrides this on the command line.
+CART_FLASHER_BUILD_KIND ?= Debug
 export CART_FLASHER_BUILD_KIND
 
 GAME_TITLE     := Cart-Flasher
