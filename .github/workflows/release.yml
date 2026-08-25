@@ -18,8 +18,10 @@ jobs:
     steps:
       - name: Checkout repo
         uses: actions/checkout@v7.0.1
-      - name: Initialize flashcart core
-        run: git submodule update --init --checkout arm9/vendor/flashcart_core
+      - name: Initialize core submodules
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          git submodule update --init --checkout arm9/vendor/flashcart_core arm9/vendor/libncgc
       - name: Build app
         id: build
         # NDS_OUT is fixed so every release carries an identically-named asset,
@@ -29,7 +31,6 @@ jobs:
           # actions/checkout owns this workspace, while the BlocksDS container
           # runs as a different UID. Trust this exact checkout so Makefile's
           # build-summary git lookup does not emit a dubious-ownership error.
-          git config --global --add safe.directory "$GITHUB_WORKSPACE"
           SHORT_SHA=$(printf '%.7s' "$GITHUB_SHA")
           make NDS_OUT=cart_flasher.nds CART_FLASHER_COMMIT="$SHORT_SHA" CART_FLASHER_VERSION=${{ github.ref_name }} CART_FLASHER_BUILD_KIND=Release
           echo "short_sha=$SHORT_SHA" >> "$GITHUB_OUTPUT"

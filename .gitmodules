@@ -1,3 +1,6 @@
 [submodule "arm9/vendor/flashcart_core"]
 	path = arm9/vendor/flashcart_core
 	url = https://github.com/ntrteam/flashcart_core.git
+[submodule "arm9/vendor/libncgc"]
+	path = arm9/vendor/libncgc
+	url = https://github.com/angelsl/libncgc.git

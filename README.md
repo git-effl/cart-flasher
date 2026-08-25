@@ -81,8 +81,8 @@ sudo ./build.sh
 This builds inside Docker (BlocksDS toolchain included) and produces `cart_flasher-dev.nds`.
 Nightlies are `cart_flasher-nightly-<commit>.nds`; releases are `cart_flasher.nds`. If you already
 have BlocksDS installed locally, run `git submodule update --init --recursive`
-once, then `make` works directly without Docker. `build.sh` initializes the
-pinned `flashcart_core` submodule itself before starting Docker.
+once, then `make` works directly without Docker. `build.sh` initializes both
+pinned core submodules itself before starting Docker.
 
 Local builds use build kind `Debug` and include a software-only simulated cart.
 It exercises full flash and DS banner operations with deterministic data,

@@ -6,11 +6,14 @@ cd "$(dirname "$0")"
 
 BUILD_LOG="build.log"
 
-echo "Initializing pinned flashcart_core submodule"
-git submodule sync -- arm9/vendor/flashcart_core
-git submodule update --init --checkout arm9/vendor/flashcart_core
-if [ ! -f arm9/vendor/flashcart_core/device.h ]; then
-    echo "Error: flashcart_core initialization failed."
+echo "Initializing pinned core submodules"
+git submodule sync --recursive
+git submodule update --init --checkout \
+    arm9/vendor/flashcart_core \
+    arm9/vendor/libncgc
+if [ ! -f arm9/vendor/flashcart_core/device.h ] \
+    || [ ! -f arm9/vendor/libncgc/include/ncgc/ntrcard.h ]; then
+    echo "Error: core submodule initialization failed."
     exit 1
 fi
 

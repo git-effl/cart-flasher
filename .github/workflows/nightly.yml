@@ -24,15 +24,16 @@ jobs:
     steps:
       - name: Checkout repo
         uses: actions/checkout@v7.0.1
-      - name: Initialize flashcart core
-        run: git submodule update --init --checkout arm9/vendor/flashcart_core
+      - name: Initialize core submodules
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          git submodule update --init --checkout arm9/vendor/flashcart_core arm9/vendor/libncgc
       - name: Build app
         id: build
         run: |
           # actions/checkout owns this workspace, while the BlocksDS container
           # runs as a different UID. Trust this exact checkout before Make's
           # build-summary git lookup.
-          git config --global --add safe.directory "$GITHUB_WORKSPACE"
           SHORT_SHA=$(printf '%.7s' "$GITHUB_SHA")
           NDS_NAME="cart_flasher-nightly-$SHORT_SHA.nds"
           make NDS_OUT="$NDS_NAME" CART_FLASHER_COMMIT="$SHORT_SHA" CART_FLASHER_VERSION=nightly CART_FLASHER_BUILD_KIND=Nightly

@@ -33,17 +33,20 @@ include platform.$(PLATFORM).make
 
 OBJFILES	:=	$(OBJFILES) $(patsubst %,obj/$(PLATFORM)/%.o,$(CFILES) $(CXXFILES))
 
-obj/$(PLATFORM)/%.c.o: src/%.c
+obj/$(PLATFORM)/:
+	@mkdir -p $@
+
+obj/$(PLATFORM)/%.c.o: src/%.c | obj/$(PLATFORM)/
 	@echo $^ =\> $@
 	@mkdir -p $(dir $@)
 	@$(CC) -MMD -MP -MF obj/$(PLATFORM)/$*.c.d $(CFLAGS) -c $< -o $@ $(ERROR_FILTER)
 
-obj/$(PLATFORM)/%.cpp.o: src/%.cpp
+obj/$(PLATFORM)/%.cpp.o: src/%.cpp | obj/$(PLATFORM)/
 	@echo $^ =\> $@
 	@mkdir -p $(dir $@)
 	@$(CXX) -MMD -MP -MF obj/$(PLATFORM)/$*.cpp.d $(CXXFLAGS) -c $< -o $@ $(ERROR_FILTER)
 
-obj/$(PLATFORM)/%.bin.o: %.bin
+obj/$(PLATFORM)/%.bin.o: %.bin | obj/$(PLATFORM)/
 	@echo $^ =\> $@
 	@mkdir -p $(dir $@)
 	@ld -r -b binary $^ -o $@

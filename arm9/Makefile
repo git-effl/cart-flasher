@@ -6,10 +6,16 @@ export BLOCKSDS			?= /opt/blocksds/core
 TARGET			?= cart_flasher
 .DEFAULT_GOAL		:= all
 
-LIBNCGC := $(CURDIR)/vendor/libncgc
-
 BUILDDIR	:= build
 GENERATEDDIR	:= generated
+LIBNCGC_UPSTREAM := vendor/libncgc
+LIBNCGC_DIR := $(GENERATEDDIR)/libncgc
+LIBNCGC_OVERLAYDIR := overlays/libncgc
+LIBNCGC_STAMP := $(LIBNCGC_DIR)/.prepared
+LIBNCGC_UPSTREAM_FILES := $(shell find -L $(LIBNCGC_UPSTREAM) -type f -not -path "*/.git/*")
+LIBNCGC_OVERLAY_FILES := $(shell find -L $(LIBNCGC_OVERLAYDIR)/files -type f)
+LIBNCGC := $(LIBNCGC_DIR)
+
 FLASHCART_CORE_UPSTREAM := vendor/flashcart_core
 FLASHCART_CORE_DIR := $(GENERATEDDIR)/flashcart_core
 FLASHCART_CORE_OVERLAYDIR := overlays/flashcart_core
@@ -114,7 +120,12 @@ all: $(ELF)
 # Without a prerequisite, make would skip this once lib/libncgc.a exists and
 # silently ignore libncgc edits. Delegating every build is a no-op when
 # nothing changed.
-$(LIBNCGC)/lib/libncgc.a: force_libncgc
+$(LIBNCGC_STAMP): $(LIBNCGC_UPSTREAM_FILES) $(LIBNCGC_OVERLAY_FILES) scripts/prepare_libncgc.sh
+	@echo "  PREPARE.9 libncgc"
+	$(V)$(SHELL) scripts/prepare_libncgc.sh "$(LIBNCGC_UPSTREAM)" "$(LIBNCGC_OVERLAYDIR)" "$(LIBNCGC_DIR)"
+	$(V)touch $@
+
+$(LIBNCGC)/lib/libncgc.a: $(LIBNCGC_STAMP) force_libncgc
 	@$(MAKE) PLATFORM=ntr -C $(LIBNCGC) fordka
 
 force_libncgc:
@@ -129,7 +140,7 @@ $(FLASHCART_CORE_SOURCES): $(FLASHCART_CORE_STAMP)
 
 # App sources include flashcart_core headers from the generated patched copy,
 # so its stamp must be ready before any ARM9 compilation can start.
-$(OBJS_SOURCES): $(FLASHCART_CORE_STAMP)
+$(OBJS_SOURCES): $(FLASHCART_CORE_STAMP) $(LIBNCGC_STAMP)
 
 $(ELF): $(LIBNCGC)/lib/libncgc.a $(OBJS)
 	@echo "  LD.9    $@"
@@ -137,7 +148,6 @@ $(ELF): $(LIBNCGC)/lib/libncgc.a $(OBJS)
 
 clean:
 	@echo "  CLEAN.9"
-	$(V)$(MAKE) clean -C $(LIBNCGC)
 	$(V)$(RM) $(ELF) $(MAP) $(BUILDDIR) $(GENERATEDDIR)
 
 $(BUILDDIR)/%.s.o : %.s
