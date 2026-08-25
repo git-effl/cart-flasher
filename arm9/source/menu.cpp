@@ -103,6 +103,29 @@ static void DrawTopStatus(const char *title, const char *message,
 	DrawTopStatusAt(title, message, color, action, 2);
 }
 
+static bool IsBannerValidationFailure(return_codes_t result) {
+	return result == BANNER_SIZE_INVALID
+		|| result == BANNER_VERSION_INVALID
+		|| result == BANNER_CRC_INVALID;
+}
+
+static void DrawBannerValidationError(return_codes_t result, const char *action) {
+	const char *reason = result == BANNER_SIZE_INVALID
+		? "The file is not 2,112 bytes."
+		: result == BANNER_VERSION_INVALID
+			? "It is not a Regular DS v1 banner."
+			: "The banner checksum is invalid.";
+	char message[128];
+	snprintf(message, sizeof(message), "This banner can't be used.\n\n%s", reason);
+	DrawTopStatus("Banner image rejected", message, COLOR_RED, action);
+}
+
+static void DrawFlashImageValidationError(const char *action) {
+	DrawTopStatus("Flash image rejected",
+		"This flash image can't be used.\n\nIt is smaller than this cart's flashrom.",
+		COLOR_RED, action);
+}
+
 static bool ConfirmRecoveryHeader(const char *profilePrompt) {
 	DrawHeader(TOP_SCREEN, "Cart not detected");
 	DrawString(TOP_SCREEN, FONT_WIDTH, 2 * FONT_HEIGHT, COLOR_WHITE,
@@ -172,6 +195,31 @@ static int DrawWrappedText(u16 *screen, int x, int y, u16 color, const char *tex
 		y += FONT_HEIGHT;
 	}
 	return y;
+}
+
+static int DrawCenteredTextBlock(u16 *screen, int y, u16 color, const char *text) {
+	int lineCount = 1;
+	for (const char *p = text; *p; ++p) {
+		if (*p == '\n') { ++lineCount; }
+	}
+	DrawStringCentered(screen, y, color, text);
+	return y + lineCount * FONT_HEIGHT;
+}
+
+static bool ConfirmDestructiveWrite(const char *message) {
+	// The combo is centered, so the short user-facing explanation is centered
+	// with it. Callers explicitly balance the lines rather than relying on
+	// automatic wrapping to produce an uneven modal.
+	const int contentY = 2 * FONT_HEIGHT;
+	const int nextY = DrawCenteredTextBlock(TOP_SCREEN, contentY,
+		COLOR_WHITE, message);
+	const int titleY = nextY + FONT_HEIGHT;
+	const int comboY = titleY + (2 * FONT_HEIGHT);
+
+	DrawStringCentered(TOP_SCREEN, titleY, COLOR_YELLOW,
+		"Enter the key combo to confirm:");
+	DrawTopFooterAction("<B> Cancel");
+	return d0k3_buttoncombo(titleY, comboY);
 }
 
 static void DrawFlashcartInfo(Flashcart *cart) {
@@ -378,6 +426,8 @@ void menu_lvl2(Flashcart* cart)
 	DrawTopFooterAction("<A> Select   <B> Back");
 	int menu_sel = 0;
 	bool dirty = true;
+	const bool hasBannerWrite = cart->getBannerWriteProfile() != nullptr;
+	const int menuItemCount = hasBannerWrite ? 3 : 2;
 
 	while (true)
 	{
@@ -388,12 +438,15 @@ void menu_lvl2(Flashcart* cart)
 		if (dirty) {
 			DrawListRow(TOP_SCREEN, 2 * FONT_HEIGHT, menu_sel == 0, COLOR_ACCENT, "Back up flash");	//0
 			DrawListRow(TOP_SCREEN, 3 * FONT_HEIGHT, menu_sel == 1, COLOR_TINTEDRED, "Write flash");	//1
+			if (hasBannerWrite) {
+				DrawListRow(TOP_SCREEN, 4 * FONT_HEIGHT, menu_sel == 2, COLOR_TINTEDRED, "Write banner only");	//2
+			}
 			dirty = false;
 		}
 
 		scanKeys();
 
-		if (keysDown() & KEY_DOWN && menu_sel < 1)
+		if (keysDown() & KEY_DOWN && menu_sel < menuItemCount - 1)
 		{
 			menu_sel++;
 			dirty = true;
@@ -407,25 +460,66 @@ void menu_lvl2(Flashcart* cart)
 		{
 			break;
 		}
-		int ntrboot_return = 0;
+		return_codes_t ntrboot_return = ALL_OK;
 
 		if (keysDown() & KEY_A)
 		{
 			char writePath[512];
-			if (menu_sel == 1) {
-				if (!BrowseForFile("/cart-backups", ".bin", writePath, sizeof(writePath))) {
+			const bool isBackup = menu_sel == 0;
+			const bool isBannerWrite = hasBannerWrite && menu_sel == 2;
+			if (!isBackup) {
+				if (!BrowseForFile(isBannerWrite ? "/" : "/cart-backups", ".bin",
+					isBannerWrite ? "Pick a .bin banner" : "Pick a flash image",
+					writePath, sizeof(writePath))) {
 					DrawHeader(TOP_SCREEN, cart->getName());
 					DrawTopFooterAction("<A> Select   <B> Back");
 					dirty = true;
 					continue;
+				}
+				{
+					// Validate the selected source before asking for the destructive
+					// combo. The write path loads it again after confirmation so a
+					// file replacement on the SD card can't bypass this check.
+					const return_codes_t validation = isBannerWrite
+						? ValidateBannerFile(cart, writePath)
+						: ValidateFlashImage(cart, writePath);
+					if (validation != ALL_OK) {
+						DrawHeader(TOP_SCREEN, cart->getName());
+						if (isBannerWrite && IsBannerValidationFailure(validation)) {
+							DrawBannerValidationError(validation, "<B> Back to banner list");
+						} else if (isBannerWrite && validation == FLASH_OP_FAILED) {
+							DrawTopStatus("Banner write unavailable",
+								"This banner can't be used.\n\nThe cart no longer matches\nthe validated layout.",
+								COLOR_RED, "<B> Back to banner list");
+						} else if (!isBannerWrite && validation == FLASH_OP_FAILED) {
+							DrawTopStatus("Flash write unavailable",
+								"This flash image can't be used.\n\nThe cart doesn't report a restore size.",
+								COLOR_RED, "<B> Back to flash list");
+						} else if (!isBannerWrite && validation == FLASH_IMAGE_INVALID) {
+							DrawFlashImageValidationError("<B> Back to flash list");
+						} else {
+							DrawTopStatus(isBannerWrite ? "Banner check failed" : "Flash image check failed",
+								isBannerWrite
+									? "We couldn't validate this banner.\n\nThe selected file couldn't be read."
+									: "We couldn't validate this flash image.\n\nThe selected file couldn't be read.",
+								COLOR_RED, isBannerWrite
+									? "<B> Back to banner list"
+									: "<B> Back to flash list");
+						}
+						WaitPress(KEY_B);
+						DrawHeader(TOP_SCREEN, cart->getName());
+						DrawTopFooterAction("<A> Select   <B> Back");
+						dirty = true;
+						continue;
+					}
 				}
 				// No DrawHeader here: the confirm below redraws it anyway, and
 				// clears the file browser off the screen while it's at it.
 			}
 
 			// Confirm takes the whole screen -- DrawHeader clears the menu
-			// behind it (footer included) for free. Both paths are 10 rows
-			// centred at row 5; the row numbers below follow from that.
+			// behind it (footer included) for free. Destructive messages use
+			// the same one-character content inset as the bottom screen.
 			//
 			// Only writing is gated behind the combo: reading can't damage the
 			// cart (no driver reaches erase/program from readFlash), and
@@ -433,31 +527,43 @@ void menu_lvl2(Flashcart* cart)
 			// combo before the destructive path.
 			DrawHeader(TOP_SCREEN, cart->getName());
 			bool confirmed;
-			if (menu_sel == 0)
+			if (isBackup)
 			{
 				DrawString(TOP_SCREEN, 34, (5 * FONT_HEIGHT), COLOR_WHITE,
 					"Dumping this cart's flashrom to\n/cart-backups on your SD card.\n\nNothing is written to the cart.\n\nIf it fails, or the dump is\nnonsense, STOP and open a GitHub\nissue.");
 				DrawTopFooterAction("<A> Start backup   <B> Cancel");
 				confirmed = WaitConfirm();
 			}
+			else if (isBannerWrite)
+			{
+				confirmed = ConfirmDestructiveWrite(
+					"Change this cart's DS banner?\n\n"
+					"Only the banner area is updated.\n"
+					"Your other flashrom data\n"
+					"stays intact.\n\n"
+					"Custom banners need CFW on DSi or 3DS.");
+			}
 			else
 			{
 				// Banner/icon note is write-only: restoring an untouched dump
 				// leaves the banner byte-identical, so it can't break stock
 				// DSi/3DS loading.
-				DrawString(TOP_SCREEN, 22, (5 * FONT_HEIGHT), COLOR_WHITE,
-					"This overwrites the cart's flashrom\nand can't be undone.\n\nA changed icon or banner is blocked\nby stock DSi/3DS firmware unless CFW\nis installed. NDS/DS Lite are fine.");
-				DrawStringCentered(TOP_SCREEN, (12 * FONT_HEIGHT), COLOR_YELLOW, "Enter the key combo to confirm:");
-				DrawTopFooterAction("<B> Cancel");
-				confirmed = d0k3_buttoncombo(14 * FONT_HEIGHT);
+				confirmed = ConfirmDestructiveWrite(
+					"Replace this cart's flashrom?\n\n"
+					"Keep your original backup.\n"
+					"You can restore it if something\n"
+					"goes wrong.\n\n"
+					"Custom banners need CFW on DSi or 3DS.");
 			}
 
 			if (confirmed)
 			{
 				ClearScreen(BOTTOM_SCREEN, COLOR_BLACK);
-				if (menu_sel == 0) {
+				if (isBackup) {
 					ntrboot_return = DumpFlash(cart);
-				} else if (menu_sel == 1) {
+				} else if (isBannerWrite) {
+					ntrboot_return = WriteBanner(cart, writePath);
+				} else {
 					ntrboot_return = WriteFlash(cart, writePath);
 				}
 
@@ -470,9 +576,13 @@ void menu_lvl2(Flashcart* cart)
 						break;
 
 					case FILE_OPEN_FAILED:
-						if (menu_sel == 0) {
+						if (isBackup) {
 							DrawTopStatus("Backup failed",
 								"Couldn't create the backup file.\nCheck the SD card isn't full or locked.",
+								COLOR_RED, "<B> Back to cart list");
+						} else if (isBannerWrite) {
+							DrawTopStatus("Banner write failed",
+								"Couldn't open the selected image.\nIt may have been moved or deleted.",
 								COLOR_RED, "<B> Back to cart list");
 						} else {
 							DrawTopStatus("Write failed",
@@ -483,9 +593,13 @@ void menu_lvl2(Flashcart* cart)
 						break;
 
 					case FILE_IO_FAILED:
-						if (menu_sel == 0) {
+						if (isBackup) {
 							DrawTopStatus("Backup failed",
 								"Could not write the backup file.\nCheck the SD card has free space.",
+								COLOR_RED, "<B> Back to cart list");
+						} else if (isBannerWrite) {
+							DrawTopStatus("Banner write failed",
+								"Couldn't read the selected image.\nCheck the SD card and try again.",
 								COLOR_RED, "<B> Back to cart list");
 						} else {
 							DrawTopStatus("Write failed",
@@ -496,15 +610,31 @@ void menu_lvl2(Flashcart* cart)
 						break;
 
 					case FLASH_OP_FAILED:
-						if (menu_sel == 0) {
+						if (isBackup) {
 							DrawTopStatus("Backup failed",
 								"Reading from the cart failed\npartway through. Try reseating it.",
+								COLOR_RED, "<B> Back to cart list");
+						} else if (isBannerWrite) {
+							DrawTopStatus("Banner write failed",
+								"Cart geometry or readback verification\nfailed. Only banner blocks were targeted;\nrestore a verified image if needed.",
 								COLOR_RED, "<B> Back to cart list");
 						} else {
 							DrawTopStatus("Write failed",
 								"Writing to the cart failed\npartway through. Try reseating it.",
 								COLOR_RED, "<B> Back to cart list");
 						}
+						WaitPress(KEY_B);
+						break;
+
+					case BANNER_SIZE_INVALID:
+					case BANNER_VERSION_INVALID:
+					case BANNER_CRC_INVALID:
+						DrawBannerValidationError(ntrboot_return, "<B> Back to cart list");
+						WaitPress(KEY_B);
+						break;
+
+					case FLASH_IMAGE_INVALID:
+						DrawFlashImageValidationError("<B> Back to cart list");
 						WaitPress(KEY_B);
 						break;
 
@@ -516,9 +646,13 @@ void menu_lvl2(Flashcart* cart)
 						break;
 
 					case ALL_OK:
-						if (menu_sel == 0) {
+						if (isBackup) {
 							DrawTopStatus("Backup complete",
 								"Your dump was saved successfully.",
+								COLOR_GREEN, "<A> Continue");
+						} else if (isBannerWrite) {
+							DrawTopStatus("Banner updated",
+								"Only the banner was changed and\nread back successfully.",
 								COLOR_GREEN, "<A> Continue");
 						} else {
 							DrawTopStatus("Write complete",
@@ -552,7 +686,7 @@ void menu_lvl2(Flashcart* cart)
 const char rancombo_symbols[5] = { '\x1B', '\x18', '\x1A', '\x19', 'A' }; // Left, Up, Right, Down
 const u32 rancombo_inputs[5] = { KEY_LEFT, KEY_UP, KEY_RIGHT, KEY_DOWN, KEY_A };
 
-bool d0k3_buttoncombo(int cur_r)
+bool d0k3_buttoncombo(int titleY, int comboY)
 {
 	// Always 5 slots wide, so it centres itself instead of making callers work
 	// the column out; the last slot has no trailing gap.
@@ -588,7 +722,7 @@ bool d0k3_buttoncombo(int cur_r)
 		u16 cur_color = COLOR_GREEN;
 		for (int i = 0; i < 5; i++) {
 			if (i >= depth) { cur_color = COLOR_WHITE; }
-			d0k3_buttoncombo_print_chars(temp_c, cur_r, cur_color, print_rancombo[i]);
+			d0k3_buttoncombo_print_chars(temp_c, comboY, cur_color, print_rancombo[i]);
 			temp_c += 4 * FONT_WIDTH; //3 for our printout ('<', 'arrow', '>'), and one for the space that follows it
 		}
 
@@ -606,20 +740,20 @@ bool d0k3_buttoncombo(int cur_r)
 				// this only suppresses a reset, it never advances the combo.
 			}
 			else {
-				// Clear the combo title (Row 12) and arrows (Row 14) on failure.
-				// Wipes from Row 12 to the bottom of the screen.
-				DrawRectangle(TOP_SCREEN, 0, 12 * FONT_HEIGHT, SCREEN_WIDTH, SCREEN_HEIGHT - 12 * FONT_HEIGHT, COLOR_BLACK);
+				// Clear the calculated combo title and arrows on failure, leaving
+				// the one-character-inset explanatory message intact.
+				DrawRectangle(TOP_SCREEN, 0, titleY, SCREEN_WIDTH, SCREEN_HEIGHT - titleY, COLOR_BLACK);
 
-				// Red error displays on Row 12 (where the combo title was).
+				// Red error displays where the combo title was.
 				// The action follows the common footer placement.
-				DrawStringCentered(TOP_SCREEN, 12 * FONT_HEIGHT, COLOR_RED, "Wrong key combo, nothing was touched.");
+				DrawStringCentered(TOP_SCREEN, titleY, COLOR_RED, "Wrong key combo, nothing was touched.");
 				DrawTopFooterAction("<A> Retry   <B> Cancel");
 
 				if (!WaitConfirm()) { return false; }
 
 				// Clear the error/action lines and restore the combo title before retrying.
-				DrawRectangle(TOP_SCREEN, 0, 12 * FONT_HEIGHT, SCREEN_WIDTH, SCREEN_HEIGHT - 12 * FONT_HEIGHT, COLOR_BLACK);
-				DrawStringCentered(TOP_SCREEN, 12 * FONT_HEIGHT, COLOR_YELLOW, "Enter the key combo to confirm:");
+				DrawRectangle(TOP_SCREEN, 0, titleY, SCREEN_WIDTH, SCREEN_HEIGHT - titleY, COLOR_BLACK);
+				DrawStringCentered(TOP_SCREEN, titleY, COLOR_YELLOW, "Enter the key combo to confirm:");
 				DrawTopFooterAction("<B> Cancel");
 				depth = 0;
 			}

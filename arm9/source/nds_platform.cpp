@@ -21,6 +21,49 @@
 
 int progressCount = 0;
 
+namespace {
+
+constexpr uint16_t kNdsBannerVersionV1 = 0x0001;
+constexpr uint32_t kNdsBannerV1Size = 0x840;
+constexpr uint32_t kNdsBannerCrcOffset = 0x02;
+constexpr uint32_t kNdsBannerCrcStart = 0x20;
+
+enum class NdsBannerValidation {
+	Valid,
+	WrongSize,
+	WrongVersion,
+	WrongCrc,
+};
+
+uint16_t NdsBannerCrc16(const uint8_t *data, size_t size) {
+	uint16_t crc = 0xFFFF;
+	for (size_t i = 0; i < size; ++i) {
+		crc ^= data[i];
+		for (int bit = 0; bit < 8; ++bit) {
+			crc = (crc >> 1) ^ ((crc & 1) ? 0xA001 : 0);
+		}
+	}
+	return crc;
+}
+
+NdsBannerValidation ValidateNdsBannerV1(const uint8_t *banner, size_t bannerSize) {
+	if (!banner || bannerSize != kNdsBannerV1Size) {
+		return NdsBannerValidation::WrongSize;
+	}
+	if (banner[0] != (kNdsBannerVersionV1 & 0xFF)
+		|| banner[1] != (kNdsBannerVersionV1 >> 8)) {
+		return NdsBannerValidation::WrongVersion;
+	}
+	const uint16_t expectedCrc = static_cast<uint16_t>(banner[kNdsBannerCrcOffset])
+		| (static_cast<uint16_t>(banner[kNdsBannerCrcOffset + 1]) << 8);
+	return NdsBannerCrc16(banner + kNdsBannerCrcStart,
+		bannerSize - kNdsBannerCrcStart) == expectedCrc
+		? NdsBannerValidation::Valid
+		: NdsBannerValidation::WrongCrc;
+}
+
+} // namespace
+
 bool file_exists(const char* filename) {
 	return access(filename, F_OK) == 0;
 }
@@ -281,9 +324,12 @@ static return_codes_t StreamFlash(flashcart_core::Flashcart* cart, const char* f
 		long fileSize = ftell(file);
 		rewind(file);
 		if (fileSize < 0 || (u32)fileSize < Flash_size) {
+			flashcart_core::platform::logMessage(flashcart_core::LOG_ERR,
+				"StreamFlash: expected at least %lu bytes, got %ld from %s",
+				static_cast<unsigned long>(Flash_size), fileSize, filepath);
 			delete[] chunkBuffer;
 			fclose(file);
-			return FILE_IO_FAILED;
+			return FLASH_IMAGE_INVALID;
 		}
 	}
 
@@ -354,7 +400,168 @@ return_codes_t DumpFlash(flashcart_core::Flashcart* cart)
 	return result;
 }
 
+return_codes_t ValidateFlashImage(flashcart_core::Flashcart* cart, const char* filepath)
+{
+	const size_t flashSize = cart->getMaxLength();
+	if (flashSize == 0) {
+		flashcart_core::platform::logMessage(flashcart_core::LOG_ERR,
+			"FlashImage: cart has no restore-supported flash capacity");
+		return FLASH_OP_FAILED;
+	}
+
+	if (mount_fat() != ALL_OK) { return FAT_MOUNT_FAILED; }
+	flashcart_core::platform::logMessage(flashcart_core::LOG_NOTICE,
+		"FlashImage: selected %s", filepath);
+
+	FILE* file = fopen(filepath, "rb");
+	if (!file) {
+		flashcart_core::platform::logMessage(flashcart_core::LOG_ERR,
+			"FlashImage: couldn't open %s", filepath);
+		return FILE_OPEN_FAILED;
+	}
+	if (fseek(file, 0, SEEK_END) != 0) {
+		flashcart_core::platform::logMessage(flashcart_core::LOG_ERR,
+			"FlashImage: couldn't seek %s", filepath);
+		fclose(file);
+		return FILE_IO_FAILED;
+	}
+	const long fileSize = ftell(file);
+	fclose(file);
+	if (fileSize < 0 || static_cast<size_t>(fileSize) < flashSize) {
+		flashcart_core::platform::logMessage(flashcart_core::LOG_ERR,
+			"FlashImage: expected at least %lu bytes, got %ld",
+			static_cast<unsigned long>(flashSize), fileSize);
+		return FLASH_IMAGE_INVALID;
+	}
+
+	// Some supported carts have historical oversized backups. Their leading
+	// flashSize bytes remain a valid restore image, so only reject truncation.
+	flashcart_core::platform::logMessage(flashcart_core::LOG_NOTICE,
+		"FlashImage: accepted %ld-byte image for %lu-byte flash",
+		fileSize, static_cast<unsigned long>(flashSize));
+	return ALL_OK;
+}
+
 return_codes_t WriteFlash(flashcart_core::Flashcart* cart, const char* filepath)
 {
 	return StreamFlash(cart, filepath, false);
+}
+
+static return_codes_t LoadBannerFile(flashcart_core::Flashcart* cart,
+	const char* filepath, const char* phase, uint8_t** outBanner, uint32_t* outBannerSize)
+{
+	*outBanner = nullptr;
+	*outBannerSize = 0;
+	const flashcart_core::BannerWriteProfile* const profile =
+		cart->getBannerWriteProfile();
+	if (!profile || profile->bannerSize == 0) {
+		flashcart_core::platform::logMessage(flashcart_core::LOG_ERR,
+			"BannerFile[%s]: cart has no valid banner-write profile", phase);
+		return FLASH_OP_FAILED;
+	}
+
+	if (mount_fat() != ALL_OK) { return FAT_MOUNT_FAILED; }
+	flashcart_core::platform::logMessage(flashcart_core::LOG_NOTICE,
+		"BannerFile[%s]: selected %s", phase, filepath);
+
+	FILE* file = fopen(filepath, "rb");
+	if (!file) {
+		flashcart_core::platform::logMessage(flashcart_core::LOG_ERR,
+			"BannerFile[%s]: couldn't open %s", phase, filepath);
+		return FILE_OPEN_FAILED;
+	}
+
+	if (fseek(file, 0, SEEK_END) != 0) {
+		flashcart_core::platform::logMessage(flashcart_core::LOG_ERR,
+			"BannerFile[%s]: couldn't seek %s", phase, filepath);
+		fclose(file);
+		return FILE_IO_FAILED;
+	}
+	const long fileSize = ftell(file);
+	if (fileSize < 0 || static_cast<uint32_t>(fileSize) != profile->bannerSize) {
+		flashcart_core::platform::logMessage(flashcart_core::LOG_ERR,
+			"BannerFile[%s]: expected %lu bytes, got %ld",
+			phase, static_cast<unsigned long>(profile->bannerSize), fileSize);
+		fclose(file);
+		return BANNER_SIZE_INVALID;
+	}
+
+	uint8_t* const banner = new(std::nothrow) uint8_t[profile->bannerSize];
+	if (!banner) {
+		flashcart_core::platform::logMessage(flashcart_core::LOG_ERR,
+			"BannerFile[%s]: banner buffer allocation failed", phase);
+		fclose(file);
+		return MEM_ALLOC_FAILED;
+	}
+
+	if (fseek(file, 0, SEEK_SET) != 0
+		|| fread(banner, 1, profile->bannerSize, file) != profile->bannerSize) {
+		flashcart_core::platform::logMessage(flashcart_core::LOG_ERR,
+			"BannerFile[%s]: couldn't read %s", phase, filepath);
+		delete[] banner;
+		fclose(file);
+		return FILE_IO_FAILED;
+	}
+	fclose(file);
+
+	const NdsBannerValidation validation = ValidateNdsBannerV1(banner, profile->bannerSize);
+	if (validation != NdsBannerValidation::Valid) {
+		const char *reason = validation == NdsBannerValidation::WrongSize
+			? "size is not 2,112 bytes"
+			: validation == NdsBannerValidation::WrongVersion
+				? "version is not Regular DS v1"
+				: "checksum does not match";
+		flashcart_core::platform::logMessage(flashcart_core::LOG_ERR,
+			"BannerFile[%s]: %s", phase, reason);
+		delete[] banner;
+		if (validation == NdsBannerValidation::WrongSize) {
+			return BANNER_SIZE_INVALID;
+		}
+		return validation == NdsBannerValidation::WrongVersion
+			? BANNER_VERSION_INVALID : BANNER_CRC_INVALID;
+	}
+	flashcart_core::platform::logMessage(flashcart_core::LOG_NOTICE,
+		"BannerFile[%s]: accepted NDS v1 banner (%lu bytes)",
+		phase, static_cast<unsigned long>(profile->bannerSize));
+	*outBanner = banner;
+	*outBannerSize = profile->bannerSize;
+	return ALL_OK;
+}
+
+return_codes_t ValidateBannerFile(flashcart_core::Flashcart* cart, const char* filepath)
+{
+	uint8_t* banner = nullptr;
+	uint32_t bannerSize = 0;
+	const return_codes_t result = LoadBannerFile(cart, filepath, "preflight",
+		&banner, &bannerSize);
+	delete[] banner;
+	return result;
+}
+
+return_codes_t WriteBanner(flashcart_core::Flashcart* cart, const char* filepath)
+{
+	uint8_t* banner = nullptr;
+	uint32_t bannerSize = 0;
+	const return_codes_t loaded = LoadBannerFile(cart, filepath, "post-combo",
+		&banner, &bannerSize);
+	if (loaded != ALL_OK) {
+		return loaded;
+	}
+
+	DrawRectangle(TOP_SCREEN, 0, 2 * FONT_HEIGHT, SCREEN_WIDTH,
+		SCREEN_HEIGHT - 2 * FONT_HEIGHT, COLOR_BLACK);
+	DrawString(TOP_SCREEN, FONT_WIDTH, 2 * FONT_HEIGHT, COLOR_WHITE,
+		"Writing and verifying the banner...");
+	ShowProgress(BOTTOM_SCREEN, 0, 1, "Writing banner");
+
+	const bool written = cart->writeBanner(banner, bannerSize);
+	delete[] banner;
+	if (!written) {
+		return FLASH_OP_FAILED;
+	}
+
+	flashcart_core::platform::logMessage(flashcart_core::LOG_NOTICE,
+		"WriteBanner: completed");
+	ShowProgress(BOTTOM_SCREEN, 1, 1, "Writing banner");
+	return ALL_OK;
 }

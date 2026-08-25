@@ -88,8 +88,9 @@ void ListDirectory(const char* path, const char* ext, std::vector<FileEntry>& ou
 	outEntries.insert(outEntries.end(), real.begin(), real.end());
 }
 
-void RenderList(const char* currentPath, const std::vector<FileEntry>& entries, int cursor, int scrollTop, int visibleCount) {
-	DrawHeader(TOP_SCREEN, "Pick a file to write");
+void RenderList(const char* currentPath, const char* title,
+				const std::vector<FileEntry>& entries, int cursor, int scrollTop, int visibleCount) {
+	DrawHeader(TOP_SCREEN, title);
 
 	// SCREEN_WIDTH/FONT_WIDTH (42) is one too many: DrawString starts drawing
 	// at x=FONT_WIDTH (this line's own left margin), not x=0, so only 41
@@ -135,7 +136,8 @@ void RenderList(const char* currentPath, const std::vector<FileEntry>& entries, 
 
 } // namespace
 
-bool BrowseForFile(const char* startPath, const char* ext, char* outPath, size_t outPathSize) {
+bool BrowseForFile(const char* startPath, const char* ext, const char* title,
+					char* outPath, size_t outPathSize) {
 	if (mount_fat() != ALL_OK) {
 		DrawString(TOP_SCREEN, FONT_WIDTH, (15 * FONT_HEIGHT), COLOR_RED,
 			"Couldn't access the SD card.\nMake sure it's inserted.");
@@ -161,7 +163,7 @@ bool BrowseForFile(const char* startPath, const char* ext, char* outPath, size_t
 	while (true) {
 		swiWaitForVBlank();
 		if (dirty) {
-			RenderList(currentPath, entries, cursor, scrollTop, visibleCount);
+			RenderList(currentPath, title, entries, cursor, scrollTop, visibleCount);
 			dirty = false;
 		}
 

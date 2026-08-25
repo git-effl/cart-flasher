@@ -68,3 +68,7 @@ commit `03d464c` (tag `v1.1.0`). Changes by `@tasken`:
   RDID `1528C2`. Recovery resets before each ADLE/AL3E candidate, requires
   capacity `0x15`, and keeps ntrboot injection disabled while a profile is
   active.
+- 2026-08-24 -- `device.h`: added the opt-in `BannerWriteProfile` capability.
+  The app owns the shared NDS v1 source-banner parsing; each driver must
+  independently prove its target geometry and safe write path before exposing
+  the action.

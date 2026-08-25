@@ -26,6 +26,10 @@ using std::uint32_t;
 #define BIT(n) (1u << (n))
 #endif
 namespace flashcart_core {
+struct BannerWriteProfile {
+    uint32_t bannerSize;
+};
+
 class Flashcart {
 public:
     Flashcart(const char* name, const size_t max_length);
@@ -47,6 +51,15 @@ public:
     virtual bool readFlash(uint32_t address, uint32_t length, uint8_t *buffer) = 0;
     virtual bool writeFlash(uint32_t address, uint32_t length, const uint8_t *buffer) = 0;
     virtual bool injectNtrBoot(uint8_t *blowfish_key, uint8_t *firm, uint32_t firm_size) = 0;
+    // Banner writes are opt-in because their target geometry is cart-specific.
+    // The platform validates the shared NDS v1 banner file before the driver
+    // performs its own target-layout check and read-modify-write.
+    virtual const BannerWriteProfile *getBannerWriteProfile() const { return nullptr; }
+    virtual bool writeBanner(const uint8_t *banner, uint32_t bannerSize) {
+        (void)banner;
+        (void)bannerSize;
+        return false;
+    }
 
     const char *getName() { return m_name; }
     const char *getShortName() { return m_short_name; }
