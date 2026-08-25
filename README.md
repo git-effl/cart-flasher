@@ -32,6 +32,14 @@ Download the latest [`cart_flasher.nds`](https://github.com/tasken/cart-flasher/
 > compatible 2,112-byte NTR v1 banner with a 32×32 icon, 15 visible colors,
 > transparent palette index 0, and valid CRC16 checks.
 
+> [!NOTE]
+> The same `Write banner only` action is offered for the exact 2 MiB
+> R4iSDHC.com 20XX layout. It verifies the complete expected Bomberman header
+> and current v3 stock or valid v1 custom banner before exposing the action,
+> then replaces only the v1-sized banner prefix and verifies the complete
+> 4 KiB erase block. A v3-to-v1 change also clears the unused v3 extension.
+> A valid v1 custom banner remains eligible for later banner changes.
+
 ## Supported carts
 
 Ace3DS+, Acekard 2i, DSTT, R4i Gold 3DS, R4iSDHC family, R4 SDHC Dual-Core
