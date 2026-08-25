@@ -1,6 +1,5 @@
 #include <cstring>
 #include <algorithm>
-#include <new>
 #include <ncgcpp/ntrcard.h>
 
 #include "../device.h"
@@ -245,140 +244,12 @@ class R4iSDHC : Flashcart {
     }
 
     uint8_t cart_type;
-    bool m_bannerLayoutValidated;
-
-    static const uint32_t kBannerHeaderOffset = 0x1F0000;
-    static const uint32_t kBannerOffset = 0x1A6600;
-    static const uint32_t kTargetBannerSize = 0xA40;
-    static const uint32_t kSourceBannerSize = 0x840;
-    static const uint32_t kBannerBlockStart = 0x1A6000;
-    static const uint32_t kBannerBlockSize = 0x1000;
-    static const std::uint64_t kHeaderFingerprint = 0x67E10B79824109C0ULL;
-    static const BannerWriteProfile kBannerWriteProfile;
-
-    static std::uint64_t headerFingerprint(const uint8_t *data, size_t size) {
-        std::uint64_t fingerprint = 0xCBF29CE484222325ULL;
-        for (size_t i = 0; i < size; ++i) {
-            fingerprint ^= data[i];
-            fingerprint *= 0x100000001B3ULL;
-        }
-        return fingerprint;
-    }
-
-    static uint16_t crc16(const uint8_t *data, size_t size) {
-        uint16_t crc = 0xFFFF;
-        for (size_t i = 0; i < size; ++i) {
-            crc ^= data[i];
-            for (int bit = 0; bit < 8; ++bit) {
-                crc = (crc >> 1) ^ ((crc & 1) ? 0xA001 : 0);
-            }
-        }
-        return crc;
-    }
-
-    static bool isExpectedHeader(const uint8_t *header, size_t size) {
-        if (!header || size != 0x200
-            || std::memcmp(header, "BOMBERMANLND", 12) != 0
-            || std::memcmp(header + 0x0C, "ABXK", 4) != 0
-            || std::memcmp(header + 0x10, "01", 2) != 0) {
-            return false;
-        }
-        const uint16_t expectedCrc = static_cast<uint16_t>(header[0x15E])
-            | (static_cast<uint16_t>(header[0x15F]) << 8);
-        return crc16(header, 0x15E) == expectedCrc
-            && headerFingerprint(header, size) == kHeaderFingerprint;
-    }
-
-    static bool isSourceBannerV1(const uint8_t *banner, size_t size) {
-        if (!banner || size != kSourceBannerSize
-            || banner[0] != 0x01 || banner[1] != 0x00) {
-            return false;
-        }
-        const uint16_t expectedCrc = static_cast<uint16_t>(banner[2])
-            | (static_cast<uint16_t>(banner[3]) << 8);
-        return crc16(banner + 0x20, size - 0x20) == expectedCrc;
-    }
-
-    static bool isTargetBannerV1(const uint8_t *banner, size_t size) {
-        if (!banner || size < kSourceBannerSize
-            || banner[0] != 0x01 || banner[1] != 0x00) {
-            return false;
-        }
-        const uint16_t expectedCrc = static_cast<uint16_t>(banner[2])
-            | (static_cast<uint16_t>(banner[3]) << 8);
-        return crc16(banner + 0x20, kSourceBannerSize - 0x20) == expectedCrc;
-    }
-
-    static bool isTargetBannerV3(const uint8_t *banner, size_t size) {
-        if (!banner || size != kTargetBannerSize
-            || banner[0] != 0x03 || banner[1] != 0x00) {
-            return false;
-        }
-        const uint16_t crcV1 = static_cast<uint16_t>(banner[2])
-            | (static_cast<uint16_t>(banner[3]) << 8);
-        const uint16_t crcV2 = static_cast<uint16_t>(banner[4])
-            | (static_cast<uint16_t>(banner[5]) << 8);
-        const uint16_t crcV3 = static_cast<uint16_t>(banner[6])
-            | (static_cast<uint16_t>(banner[7]) << 8);
-        return crc16(banner + 0x20, 0x840 - 0x20) == crcV1
-            && crc16(banner + 0x20, 0x940 - 0x20) == crcV2
-            && crc16(banner + 0x20, 0xA40 - 0x20) == crcV3;
-    }
-
-    enum class TargetBannerFormat {
-        Invalid,
-        V1,
-        V3,
-    };
-
-    static TargetBannerFormat targetBannerFormat(const uint8_t *banner, size_t size) {
-        if (isTargetBannerV3(banner, size)) {
-            return TargetBannerFormat::V3;
-        }
-        if (isTargetBannerV1(banner, size)) {
-            return TargetBannerFormat::V1;
-        }
-        return TargetBannerFormat::Invalid;
-    }
-
-    static const char *targetBannerFailure(const uint8_t *banner, size_t size) {
-        if (!banner || size < kSourceBannerSize) {
-            return "banner record is too short";
-        }
-        if (banner[0] == 0x01 && banner[1] == 0x00) {
-            return isTargetBannerV1(banner, size) ? nullptr
-                : "v1 banner checksum is invalid";
-        }
-        if (banner[0] != 0x03 || banner[1] != 0x00) {
-            return "banner version is neither v3 nor v1";
-        }
-        if (size != kTargetBannerSize) {
-            return "v3 banner record has the wrong size";
-        }
-        const uint16_t crcV1 = static_cast<uint16_t>(banner[2])
-            | (static_cast<uint16_t>(banner[3]) << 8);
-        const uint16_t crcV2 = static_cast<uint16_t>(banner[4])
-            | (static_cast<uint16_t>(banner[5]) << 8);
-        const uint16_t crcV3 = static_cast<uint16_t>(banner[6])
-            | (static_cast<uint16_t>(banner[7]) << 8);
-        if (crc16(banner + 0x20, 0x840 - 0x20) != crcV1) {
-            return "v3 primary checksum is invalid";
-        }
-        if (crc16(banner + 0x20, 0x940 - 0x20) != crcV2) {
-            return "v3 Chinese checksum is invalid";
-        }
-        if (crc16(banner + 0x20, 0xA40 - 0x20) != crcV3) {
-            return "v3 Korean checksum is invalid";
-        }
-        return nullptr;
-    }
 
     using Util = FlashUtil<R4iSDHC, 2, &R4iSDHC::norRead, 12, &R4iSDHC::norErase4k, 8, &R4iSDHC::norWrite256>;
 
 public:
     // Name & Size of Flash Memory
-    R4iSDHC() : Flashcart("R4iSDHC family", "r4isdhc", 0x200000),
-        cart_type(1), m_bannerLayoutValidated(false) { }
+    R4iSDHC() : Flashcart("R4iSDHC family", "r4isdhc", 0x200000), cart_type(1) { }
 
     const char* getAuthor() {
         return "handsomematt, Rai-chan, Kitlith, stuckpixel, angelsl";
@@ -395,7 +266,6 @@ public:
     }
 
     bool initialize() {
-        m_bannerLayoutValidated = false;
         const CartType1Check type1Check = checkCartType1();
         if (type1Check == CartType1Check::Error) {
             return false;
@@ -435,32 +305,6 @@ public:
             return false;
         }
 
-        uint8_t targetHeader[0x200];
-        uint8_t targetBanner[kTargetBannerSize];
-        if (!Util::read(this, kBannerHeaderOffset, sizeof(targetHeader), targetHeader)) {
-            logMessage(LOG_NOTICE,
-                "r4isdhc banner: target header read failed; option disabled");
-        } else if (!isExpectedHeader(targetHeader, sizeof(targetHeader))) {
-            logMessage(LOG_NOTICE,
-                "r4isdhc banner: target is not the known 20XX layout");
-        } else if (!Util::read(this, kBannerOffset, sizeof(targetBanner), targetBanner)) {
-            logMessage(LOG_NOTICE,
-                "r4isdhc banner: target banner read failed; option disabled");
-        } else {
-            const TargetBannerFormat format = targetBannerFormat(targetBanner,
-                sizeof(targetBanner));
-            if (format == TargetBannerFormat::Invalid) {
-                logMessage(LOG_NOTICE,
-                    "r4isdhc banner: %s; option disabled",
-                    targetBannerFailure(targetBanner, sizeof(targetBanner)));
-            } else {
-                m_bannerLayoutValidated = true;
-                logMessage(LOG_NOTICE,
-                    "r4isdhc banner: 20XX target geometry verified (current v%d)",
-                    format == TargetBannerFormat::V3 ? 3 : 1);
-            }
-        }
-
         logMessage(LOG_ERR, "r4isdhc: found type %d cart", cart_type);
         return true;
     }
@@ -473,96 +317,6 @@ public:
 
     bool writeFlash(const uint32_t address, const uint32_t length, const uint8_t *const buffer) override {
         return Util::write(this, address, length, buffer, true);
-    }
-
-    const BannerWriteProfile *getBannerWriteProfile() const override {
-        return m_bannerLayoutValidated ? &kBannerWriteProfile : nullptr;
-    }
-
-    bool writeBanner(const uint8_t *banner, uint32_t bannerSize) override {
-        if (!getBannerWriteProfile() || !isSourceBannerV1(banner, bannerSize)) {
-            logMessage(LOG_ERR, "r4isdhc banner: refusing unsupported write");
-            return false;
-        }
-
-        uint8_t targetHeader[0x200];
-        if (!Util::read(this, kBannerHeaderOffset, sizeof(targetHeader), targetHeader)
-            || !isExpectedHeader(targetHeader, sizeof(targetHeader))) {
-            logMessage(LOG_ERR,
-                "r4isdhc banner: target header no longer matches the 20XX layout");
-            return false;
-        }
-
-        uint8_t targetBanner[kTargetBannerSize];
-        if (!Util::read(this, kBannerOffset, kTargetBannerSize, targetBanner)) {
-            logMessage(LOG_ERR,
-                "r4isdhc banner: target banner read failed");
-            return false;
-        }
-        const TargetBannerFormat targetFormat = targetBannerFormat(targetBanner,
-            sizeof(targetBanner));
-        if (targetFormat == TargetBannerFormat::Invalid) {
-            logMessage(LOG_ERR,
-                "r4isdhc banner: %s",
-                targetBannerFailure(targetBanner, sizeof(targetBanner)));
-            return false;
-        }
-
-        // A v3 record extends 64 bytes into the next 4 KiB block. When
-        // converting it to v1, zero that now-unused extension as well; both
-        // pages must be read-modify-written and compared in full.
-        const uint32_t affectedSize = targetFormat == TargetBannerFormat::V3
-            ? kBannerBlockSize * 2 : kBannerBlockSize;
-        uint8_t *expectedBlocks = new(std::nothrow) uint8_t[affectedSize];
-        uint8_t *verifiedBlocks = new(std::nothrow) uint8_t[affectedSize];
-        if (!expectedBlocks || !verifiedBlocks) {
-            delete[] expectedBlocks;
-            delete[] verifiedBlocks;
-            logMessage(LOG_ERR, "r4isdhc banner: verification buffers unavailable");
-            return false;
-        }
-        if (!Util::read(this, kBannerBlockStart, affectedSize, expectedBlocks)) {
-            delete[] expectedBlocks;
-            delete[] verifiedBlocks;
-            logMessage(LOG_ERR, "r4isdhc banner: couldn't read target blocks");
-            return false;
-        }
-
-        const uint32_t bannerInBlock = kBannerOffset - kBannerBlockStart;
-        std::memcpy(expectedBlocks + bannerInBlock, banner, kSourceBannerSize);
-        if (targetFormat == TargetBannerFormat::V3) {
-            std::memset(expectedBlocks + bannerInBlock + kSourceBannerSize, 0,
-                kTargetBannerSize - kSourceBannerSize);
-            logMessage(LOG_NOTICE,
-                "r4isdhc banner: writing blocks %08lX-%08lX (v3 to v1; clearing 512-byte extension)",
-                static_cast<unsigned long>(kBannerBlockStart),
-                static_cast<unsigned long>(kBannerBlockStart + affectedSize - 1));
-        } else {
-            logMessage(LOG_NOTICE,
-                "r4isdhc banner: writing block %08lX-%08lX (v1 to v1)",
-                static_cast<unsigned long>(kBannerBlockStart),
-                static_cast<unsigned long>(kBannerBlockStart + affectedSize - 1));
-        }
-
-        if (!Util::write(this, kBannerBlockStart, affectedSize, expectedBlocks, false)) {
-            delete[] expectedBlocks;
-            delete[] verifiedBlocks;
-            logMessage(LOG_ERR, "r4isdhc banner: write verification failed");
-            return false;
-        }
-        if (!Util::read(this, kBannerBlockStart, affectedSize, verifiedBlocks)
-            || std::memcmp(expectedBlocks, verifiedBlocks, affectedSize) != 0) {
-            delete[] expectedBlocks;
-            delete[] verifiedBlocks;
-            logMessage(LOG_ERR,
-                "r4isdhc banner: full erase-block verification failed");
-            return false;
-        }
-
-        delete[] expectedBlocks;
-        delete[] verifiedBlocks;
-        logMessage(LOG_NOTICE, "r4isdhc banner: write verified");
-        return true;
     }
 
     bool injectNtrBoot(uint8_t *blowfish_key, uint8_t *firm, uint32_t firm_size) override {
@@ -594,10 +348,6 @@ public:
             Util::write(this, 0x1F7E00, std::min<uint32_t>(firm_size, (cart_type == 1 ? 0x200 : 0x8200)), firm, true,
                 "Writing FIRM (2)"); // FIRM header
     }
-};
-
-const BannerWriteProfile R4iSDHC::kBannerWriteProfile = {
-    R4iSDHC::kSourceBannerSize,
 };
 
 R4iSDHC r4isdhc;

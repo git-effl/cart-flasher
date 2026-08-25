@@ -68,19 +68,7 @@ commit `03d464c` (tag `v1.1.0`). Changes by `@tasken`:
   RDID `1528C2`. Recovery resets before each ADLE/AL3E candidate, requires
   capacity `0x15`, and keeps ntrboot injection disabled while a profile is
   active.
-- 2026-08-24 -- `device.h`: added the opt-in `BannerWriteProfile` capability.
-  The app owns the shared NDS v1 source-banner parsing; each driver must
-  independently prove its target geometry and safe write path before exposing
-  the action.
-- 2026-08-24 -- `devices/ace3dsplus.cpp`: added an opt-in target-geometry
-  profile for the hardware-validated 2 MiB AL3E Ace3DS+ layout. It validates
-  the complete expected flash-header fingerprint and current banner before
-  exposing the option and again before erase, read-modifies two 4 KiB blocks,
-  compares both blocks after programming, and logs each validation and write
-  decision. Other Ace3DS+ layouts remain hidden.
-- 2026-08-24 -- `devices/r4isdhc.cpp`: added an opt-in banner-write profile
-  for the exact 2 MiB R4iSDHC.com 20XX DEMON layout. It requires the complete
-  Bomberman flash-header fingerprint at `0x1F0000` and a CRC-valid v3 stock or
-  v1 custom banner at `0x1A6600`, rechecks both immediately before erase, and
-  compares every affected 4 KiB block after programming. A v3-to-v1 conversion
-  clears its 512-byte unused extension; other R4iSDHC layouts remain hidden.
+- 2026-08-24 -- `device.h`, `devices/ace3dsplus.cpp`: added the minimal
+  `getFlashCapacityCode()` hook. App-owned banner sidecars use it to
+  distinguish 1 MiB and 2 MiB Ace hardware before they expose a profile;
+  banner geometry and read/write operations remain outside vendor code.

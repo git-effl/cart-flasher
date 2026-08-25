@@ -7,8 +7,27 @@ export BLOCKSDS			?= /opt/blocksds/core
 LIBNCGC := $(CURDIR)/vendor/libncgc
 
 BUILDDIR	:= build
-SOURCEDIRS	:= source vendor/flashcart_core
-INCLUDEDIRS	:= vendor/flashcart_core $(BUILDDIR) $(BUILDDIR)/data
+GENERATEDDIR	:= generated
+FLASHCART_CORE_UPSTREAM := vendor/flashcart_core
+FLASHCART_CORE_DIR := $(GENERATEDDIR)/flashcart_core
+FLASHCART_CORE_OVERLAYDIR := overlays/flashcart_core
+FLASHCART_CORE_STAMP := $(FLASHCART_CORE_DIR)/.prepared
+FLASHCART_CORE_SOURCE_NAMES := \
+	device.cpp \
+	optional_platform.cpp \
+	devices/ace3dsplus.cpp \
+	devices/ak2i.cpp \
+	devices/datel.cpp \
+	devices/dstt.cpp \
+	devices/r4igold3ds.cpp \
+	devices/r4isdhc.cpp \
+	devices/r4isdhchk.cpp
+FLASHCART_CORE_SOURCES := $(addprefix $(FLASHCART_CORE_DIR)/,$(FLASHCART_CORE_SOURCE_NAMES))
+FLASHCART_CORE_UPSTREAM_FILES := $(shell find -L $(FLASHCART_CORE_UPSTREAM) -type f -not -path "*/.git/*")
+FLASHCART_CORE_OVERLAY_FILES := $(shell find -L $(FLASHCART_CORE_OVERLAYDIR)/files -type f)
+
+SOURCEDIRS	:= source
+INCLUDEDIRS	:= $(FLASHCART_CORE_DIR) $(BUILDDIR) $(BUILDDIR)/data
 DATA		:= data
 
 DEFINES		:= -DARM9 \
@@ -45,7 +64,7 @@ endif
 
 SOURCES_S	:= $(shell find -L $(SOURCEDIRS) -name "*.s")
 SOURCES_C	:= $(shell find -L $(SOURCEDIRS) -name "*.c")
-SOURCES_CPP	:= $(filter-out %example.cpp, $(shell find -L $(SOURCEDIRS) -name "*.cpp"))
+SOURCES_CPP	:= $(shell find -L $(SOURCEDIRS) -name "*.cpp") $(FLASHCART_CORE_SOURCES)
 SOURCES_BIN	:= $(shell find -L $(DATA) -name "*.*")
 
 ARCH		:= -marm -mthumb-interwork -march=armv5te -mtune=arm946e-s
@@ -91,6 +110,18 @@ $(LIBNCGC)/lib/libncgc.a: force_libncgc
 
 force_libncgc:
 
+$(FLASHCART_CORE_STAMP): $(FLASHCART_CORE_UPSTREAM_FILES) $(FLASHCART_CORE_OVERLAY_FILES) scripts/prepare_flashcart_core.sh
+	@echo "  PREPARE.9 flashcart_core"
+	$(V)$(SHELL) scripts/prepare_flashcart_core.sh "$(FLASHCART_CORE_UPSTREAM)" "$(FLASHCART_CORE_OVERLAYDIR)" "$(FLASHCART_CORE_DIR)"
+	$(V)touch $@
+
+$(FLASHCART_CORE_SOURCES): $(FLASHCART_CORE_STAMP)
+	@:
+
+# App sources include flashcart_core headers from the generated patched copy,
+# so its stamp must be ready before any ARM9 compilation can start.
+$(OBJS_SOURCES): $(FLASHCART_CORE_STAMP)
+
 $(ELF): $(LIBNCGC)/lib/libncgc.a $(OBJS)
 	@echo "  LD.9    $@"
 	$(V)$(LD) -o $@ $(OBJS) $(LDFLAGS)
@@ -98,7 +129,7 @@ $(ELF): $(LIBNCGC)/lib/libncgc.a $(OBJS)
 clean:
 	@echo "  CLEAN.9"
 	$(V)$(MAKE) clean -C $(LIBNCGC)
-	$(V)$(RM) $(ELF) $(MAP) $(BUILDDIR)
+	$(V)$(RM) $(ELF) $(MAP) $(BUILDDIR) $(GENERATEDDIR)
 
 $(BUILDDIR)/%.s.o : %.s
 	@echo "  AS.9    $<"

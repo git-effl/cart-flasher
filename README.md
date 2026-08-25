@@ -23,14 +23,16 @@ Download the latest [`cart_flasher.nds`](https://github.com/tasken/cart-flasher/
 > [!NOTE]
 > A 2 MiB Ace3DS+ with the validated AL3E layout also offers `Write banner
 > only`. It accepts only a CRC-valid, 0x840-byte NDS v1 banner `.bin`, validates
-> the complete known flash-header fingerprint and current banner layout,
-> read-modifies its two 4 KiB erase blocks while preserving neighbouring bytes,
-> and reads both full blocks back to verify them. It is unavailable for every
-> other cart layout. In
+> the known primary page map, the header's virtual banner pointer, and current
+> banner layout, then read-modifies its two 4 KiB erase blocks while preserving
+> neighbouring bytes and reads both full blocks back to verify them. It is
+> unavailable for every other cart layout. In
 > [DS Banner Maker](https://tasken.github.io/banner-maker/), create a new banner
 > from an image or re-edit an exported banner backup. It always downloads a
 > compatible 2,112-byte NTR v1 banner with a 32×32 icon, 15 visible colors,
 > transparent palette index 0, and valid CRC16 checks.
+> `Back up DS banner` saves the current reusable v1 banner to `/cart-backups`
+> without replacing an earlier banner backup.
 
 > [!NOTE]
 > The same `Write banner only` action is offered for the exact 2 MiB
@@ -39,6 +41,8 @@ Download the latest [`cart_flasher.nds`](https://github.com/tasken/cart-flasher/
 > then replaces only the v1-sized banner prefix and verifies the complete
 > 4 KiB erase block. A v3-to-v1 change also clears the unused v3 extension.
 > A valid v1 custom banner remains eligible for later banner changes.
+> `Back up DS banner` exports a reusable v1 copy of either the stock v3 or
+> current v1 banner.
 
 ## Supported carts
 
@@ -88,7 +92,9 @@ sudo ./build.sh
 
 This builds inside Docker (BlocksDS toolchain included) and produces `cart_flasher-dev.nds`.
 Nightlies are `cart_flasher-nightly-<commit>.nds`; releases are `cart_flasher.nds`. If you already
-have BlocksDS installed locally, `make` works directly without Docker.
+have BlocksDS installed locally, run `git submodule update --init --recursive`
+once, then `make` works directly without Docker. `build.sh` initializes the
+pinned `flashcart_core` submodule itself before starting Docker.
 
 ## Credits
 

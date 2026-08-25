@@ -3,7 +3,6 @@
 // See ../MODIFICATIONS.md. Original licensed under GPLv3 (see ../LICENSE).
 
 #include <cstring>
-#include <new>
 
 #include <ncgcpp/ntrcard.h>
 
@@ -50,89 +49,6 @@ const Ace3DSRecoveryProfile r4iSdhcHkSpongebobAl3e = {
 class Ace3DSPlus : Flashcart {
     const Ace3DSRecoveryProfile *m_recoveryProfile;
     uint8_t m_flashCapacity;
-    bool m_bannerLayoutValidated;
-
-    static const uint32_t kBannerHeaderOffset = 0xA000;
-    static const uint32_t kBannerOffset = 0xF5E00;
-    static const uint32_t kBannerSize = 0x840;
-    static const uint16_t kBannerVersion = 0x0001;
-    static const uint32_t kBannerCrcOffset = 0x02;
-    static const uint32_t kBannerCrcStart = 0x20;
-    static const uint32_t kBannerBlockStart = 0xF5000;
-    static const uint32_t kBannerBlockSize = 0x1000;
-    static const uint32_t kBannerBlockCount = 2;
-    static const uint32_t kBannerBlockRange = kBannerBlockSize * kBannerBlockCount;
-    static const std::uint64_t kAl3eHeaderFingerprint = 0xCE6E6557B76D5B3AULL;
-    static const BannerWriteProfile kBannerWriteProfile;
-
-    static std::uint64_t headerFingerprint(const uint8_t *data, size_t size) {
-        std::uint64_t fingerprint = 0xCBF29CE484222325ULL;
-        for (size_t i = 0; i < size; ++i) {
-            fingerprint ^= data[i];
-            fingerprint *= 0x100000001B3ULL;
-        }
-        return fingerprint;
-    }
-
-    static uint16_t crc16(const uint8_t *data, size_t size) {
-        uint16_t crc = 0xFFFF;
-        for (size_t i = 0; i < size; ++i) {
-            crc ^= data[i];
-            for (int bit = 0; bit < 8; ++bit) {
-                crc = (crc >> 1) ^ ((crc & 1) ? 0xA001 : 0);
-            }
-        }
-        return crc;
-    }
-
-    static bool isValidAl3eHeader(const uint8_t *header, size_t headerSize) {
-        if (!header || headerSize != 0x200
-            || std::memcmp(header, "SPONGEBOB AP", 12) != 0
-            || std::memcmp(header + 0x0C, "AL3E", 4) != 0
-            || std::memcmp(header + 0x10, "78", 2) != 0
-            || header[0x12] != 0x00
-            || header[0x14] != 0x08
-            // The known AL3E layout retains this source-ROM pointer even
-            // though its actual banner record lives at kBannerOffset.
-            || header[0x68] != 0x00 || header[0x69] != 0x1E
-            || header[0x6A] != 0x1A || header[0x6B] != 0x00) {
-            return false;
-        }
-        const uint16_t expectedCrc = static_cast<uint16_t>(header[0x15E])
-            | (static_cast<uint16_t>(header[0x15F]) << 8);
-        return crc16(header, 0x15E) == expectedCrc
-            && headerFingerprint(header, headerSize) == kAl3eHeaderFingerprint;
-    }
-
-    void logMountedNtrState() const {
-        const ncgc::c::ncgc_ncard_t &state = m_card->rawState();
-        logMessage(LOG_DEBUG,
-            "Ace3DSPlus banner: active NTR game=%08lX key1=%08lX key2=%08lX",
-            static_cast<unsigned long>(state.hdr.game_code),
-            static_cast<unsigned long>(state.hdr.key1_romcnt),
-            static_cast<unsigned long>(state.hdr.key2_romcnt));
-    }
-
-    static const char *bannerFailure(const uint8_t *banner, size_t bannerSize) {
-        if (!banner || bannerSize != kBannerSize) {
-            return "banner record is not 2,112 bytes";
-        }
-        if (banner[0] != (kBannerVersion & 0xFF)
-            || banner[1] != (kBannerVersion >> 8)) {
-            return "banner version is not Regular DS v1";
-        }
-        // This is the Normal v1 layout emitted by NDS Banner Editor: its first
-        // CRC covers bytes 0x20 through 0x83F. Larger v2/v3/DSi banners don't
-        // fit the validated target record and must not spill into flash data.
-        const uint16_t expectedCrc = static_cast<uint16_t>(banner[kBannerCrcOffset])
-            | (static_cast<uint16_t>(banner[kBannerCrcOffset + 1]) << 8);
-        return crc16(banner + kBannerCrcStart, bannerSize - kBannerCrcStart)
-            == expectedCrc ? nullptr : "banner checksum is invalid";
-    }
-
-    static bool isValidBanner(const uint8_t *banner, size_t bannerSize) {
-        return bannerFailure(banner, bannerSize) == nullptr;
-    }
 
     /// Gets the cart version (in the high halfword) and status (in the low byte).
     bool cmdVersionStatus(uint32_t *resp) {
@@ -566,8 +482,7 @@ class Ace3DSPlus : Flashcart {
 public:
     Ace3DSPlus()
         : Flashcart("Ace3DS+", "Ace3DSPlus", 0x200000),
-          m_recoveryProfile(nullptr), m_flashCapacity(0),
-          m_bannerLayoutValidated(false) { }
+          m_recoveryProfile(nullptr), m_flashCapacity(0) { }
 
     const char* getAuthor() {
         return "ntrteam, et al.";
@@ -626,7 +541,6 @@ public:
         ncgc::Err err;
         bool initFromRaw = m_card->state() != ncgc::NTRState::Key2;
         m_flashCapacity = 0;
-        m_bannerLayoutValidated = false;
 
         if (initFromRaw
             && !tryBlowfishKey(BlowfishKey::NTR)
@@ -697,29 +611,6 @@ public:
 
         logMessage(LOG_INFO, "Ace3DSPlus RDID: %06lX", rdid);
         m_flashCapacity = flashCapacity;
-        if (m_flashCapacity == 0x15) {
-            uint8_t targetHeader[0x200];
-            uint8_t targetBanner[kBannerSize];
-            if (!Util::read(this, kBannerHeaderOffset, sizeof(targetHeader), targetHeader)) {
-                logMessage(LOG_NOTICE,
-                    "Ace3DSPlus banner: target header read failed; option disabled");
-            } else if (!isValidAl3eHeader(targetHeader, sizeof(targetHeader))) {
-                logMessage(LOG_NOTICE,
-                    "Ace3DSPlus banner: target is not the known AL3E layout");
-            } else if (!Util::read(this, kBannerOffset, sizeof(targetBanner), targetBanner)) {
-                logMessage(LOG_NOTICE,
-                    "Ace3DSPlus banner: target banner read failed; option disabled");
-            } else if (bannerFailure(targetBanner, sizeof(targetBanner))) {
-                logMessage(LOG_NOTICE,
-                    "Ace3DSPlus banner: %s; option disabled",
-                    bannerFailure(targetBanner, sizeof(targetBanner)));
-            } else {
-                logMountedNtrState();
-                m_bannerLayoutValidated = true;
-                logMessage(LOG_NOTICE,
-                    "Ace3DSPlus banner: target geometry verified");
-            }
-        }
 
         return true;
     }
@@ -734,79 +625,8 @@ public:
         return Util::write(this, address, length, buffer, true);
     }
 
-    const BannerWriteProfile *getBannerWriteProfile() const override {
-        // The fixed AL3E banner location has only been validated on 2 MiB
-        // hardware. Other supported Ace capacities must keep this hidden.
-        return m_flashCapacity == 0x15 && m_bannerLayoutValidated
-            ? &kBannerWriteProfile : nullptr;
-    }
-
-    bool writeBanner(const uint8_t *banner, uint32_t bannerSize) override {
-        if (!getBannerWriteProfile() || !isValidBanner(banner, bannerSize)) {
-            logMessage(LOG_ERR, "Ace3DSPlus banner: refusing unsupported write");
-            return false;
-        }
-
-        uint8_t targetHeader[0x200];
-        if (!Util::read(this, kBannerHeaderOffset, sizeof(targetHeader), targetHeader)
-            || !isValidAl3eHeader(targetHeader, sizeof(targetHeader))) {
-            logMessage(LOG_ERR,
-                "Ace3DSPlus banner: target header no longer matches the AL3E layout");
-            return false;
-        }
-
-        uint8_t *expectedBlocks = new(std::nothrow) uint8_t[kBannerBlockRange];
-        uint8_t *verifiedBlocks = new(std::nothrow) uint8_t[kBannerBlockRange];
-        if (!expectedBlocks || !verifiedBlocks) {
-            delete[] expectedBlocks;
-            delete[] verifiedBlocks;
-            logMessage(LOG_ERR, "Ace3DSPlus banner: verification buffers unavailable");
-            return false;
-        }
-
-        if (!Util::read(this, kBannerBlockStart, kBannerBlockRange, expectedBlocks)) {
-            delete[] expectedBlocks;
-            delete[] verifiedBlocks;
-            logMessage(LOG_ERR, "Ace3DSPlus banner: couldn't read target blocks");
-            return false;
-        }
-        const uint32_t bannerInBlocks = kBannerOffset - kBannerBlockStart;
-        if (!isValidBanner(expectedBlocks + bannerInBlocks, kBannerSize)) {
-            delete[] expectedBlocks;
-            delete[] verifiedBlocks;
-            logMessage(LOG_ERR,
-                "Ace3DSPlus banner: target %s",
-                bannerFailure(expectedBlocks + bannerInBlocks, kBannerSize));
-            return false;
-        }
-
-        std::memcpy(expectedBlocks + bannerInBlocks, banner, kBannerSize);
-        logMessage(LOG_NOTICE,
-            "Ace3DSPlus banner: writing blocks %08lX-%08lX",
-            static_cast<unsigned long>(kBannerBlockStart),
-            static_cast<unsigned long>(kBannerBlockStart + kBannerBlockRange - 1));
-
-        // FlashUtil reads both affected 4 KiB erase blocks and preserves their
-        // surrounding bytes. Verify both complete blocks ourselves because
-        // FlashUtil's generic post-write check only covers the banner range.
-        if (!Util::write(this, kBannerOffset, kBannerSize, banner, false)) {
-            delete[] expectedBlocks;
-            delete[] verifiedBlocks;
-            logMessage(LOG_ERR, "Ace3DSPlus banner: write verification failed");
-            return false;
-        }
-        if (!Util::read(this, kBannerBlockStart, kBannerBlockRange, verifiedBlocks)
-            || std::memcmp(expectedBlocks, verifiedBlocks, kBannerBlockRange) != 0) {
-            delete[] expectedBlocks;
-            delete[] verifiedBlocks;
-            logMessage(LOG_ERR,
-                "Ace3DSPlus banner: full erase-block verification failed");
-            return false;
-        }
-        delete[] expectedBlocks;
-        delete[] verifiedBlocks;
-        logMessage(LOG_NOTICE, "Ace3DSPlus banner: write verified");
-        return true;
+    uint8_t getFlashCapacityCode() const override {
+        return m_flashCapacity;
     }
 
     bool injectNtrBoot(uint8_t *blowfish_key, uint8_t *firm, uint32_t firm_size) {
@@ -880,10 +700,6 @@ protected:
     void prepareNormalInitialization() override {
         m_recoveryProfile = nullptr;
     }
-};
-
-const BannerWriteProfile Ace3DSPlus::kBannerWriteProfile = {
-    Ace3DSPlus::kBannerSize,
 };
 
 Ace3DSPlus ace3DSPlus;

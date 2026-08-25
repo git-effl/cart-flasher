@@ -18,8 +18,10 @@ enum return_codes_t {
 return_codes_t mount_fat(void);
 return_codes_t unmount_fat(void);
 return_codes_t DumpFlash(flashcart_core::Flashcart* cart);
+return_codes_t DumpBanner(flashcart_core::Flashcart* cart);
 return_codes_t ValidateFlashImage(flashcart_core::Flashcart* cart, const char* filepath);
 return_codes_t WriteFlash(flashcart_core::Flashcart* cart, const char* filepath);
+void SetDriverProgressSuppressed(bool suppressed);
 return_codes_t ValidateBannerFile(flashcart_core::Flashcart* cart, const char* filepath);
 return_codes_t WriteBanner(flashcart_core::Flashcart* cart, const char* filepath);
 // Logs the probe and draws it on the bottom screen from `firstRow` down, taking

@@ -13,6 +13,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#include "banner_ops.h"
 #include "device.h"
 #include "ui.h"
 #include "blowfish_ntr_bin.h"
@@ -20,46 +21,16 @@
 #include "blowfish_retail_bin.h"
 
 int progressCount = 0;
+static bool suppressDriverProgress = false;
 
 namespace {
 
-constexpr uint16_t kNdsBannerVersionV1 = 0x0001;
-constexpr uint32_t kNdsBannerV1Size = 0x840;
-constexpr uint32_t kNdsBannerCrcOffset = 0x02;
-constexpr uint32_t kNdsBannerCrcStart = 0x20;
-
-enum class NdsBannerValidation {
-	Valid,
-	WrongSize,
-	WrongVersion,
-	WrongCrc,
-};
-
-uint16_t NdsBannerCrc16(const uint8_t *data, size_t size) {
-	uint16_t crc = 0xFFFF;
-	for (size_t i = 0; i < size; ++i) {
-		crc ^= data[i];
-		for (int bit = 0; bit < 8; ++bit) {
-			crc = (crc >> 1) ^ ((crc & 1) ? 0xA001 : 0);
-		}
+return_codes_t BannerValidationResult(banner_ops::SourceValidation validation) {
+	if (validation == banner_ops::SourceValidation::WrongSize) {
+		return BANNER_SIZE_INVALID;
 	}
-	return crc;
-}
-
-NdsBannerValidation ValidateNdsBannerV1(const uint8_t *banner, size_t bannerSize) {
-	if (!banner || bannerSize != kNdsBannerV1Size) {
-		return NdsBannerValidation::WrongSize;
-	}
-	if (banner[0] != (kNdsBannerVersionV1 & 0xFF)
-		|| banner[1] != (kNdsBannerVersionV1 >> 8)) {
-		return NdsBannerValidation::WrongVersion;
-	}
-	const uint16_t expectedCrc = static_cast<uint16_t>(banner[kNdsBannerCrcOffset])
-		| (static_cast<uint16_t>(banner[kNdsBannerCrcOffset + 1]) << 8);
-	return NdsBannerCrc16(banner + kNdsBannerCrcStart,
-		bannerSize - kNdsBannerCrcStart) == expectedCrc
-		? NdsBannerValidation::Valid
-		: NdsBannerValidation::WrongCrc;
+	return validation == banner_ops::SourceValidation::WrongVersion
+		? BANNER_VERSION_INVALID : BANNER_CRC_INVALID;
 }
 
 } // namespace
@@ -84,9 +55,19 @@ return_codes_t unmount_fat(void) {
 	return ALL_OK;
 }
 
+void SetDriverProgressSuppressed(bool suppressed) {
+	suppressDriverProgress = suppressed;
+	if (suppressed) {
+		progressCount = 0;
+	}
+}
+
 namespace flashcart_core {
 	namespace platform {
 		void showProgress(std::uint32_t current, std::uint32_t total, const char *status) {
+			if (suppressDriverProgress) {
+				return;
+			}
 			if (progressCount < 1000) {
 				progressCount++;
 				return;
@@ -400,6 +381,85 @@ return_codes_t DumpFlash(flashcart_core::Flashcart* cart)
 	return result;
 }
 
+static bool BannerBackupPath(const char *cartName, char *path, size_t pathSize) {
+	if (snprintf(path, pathSize, "/cart-backups/%s-banner.bin", cartName)
+		>= static_cast<int>(pathSize)) {
+		return false;
+	}
+	if (!file_exists(path)) {
+		return true;
+	}
+	for (unsigned int suffix = 2; suffix <= 99; ++suffix) {
+		if (snprintf(path, pathSize, "/cart-backups/%s-banner-%u.bin",
+				cartName, suffix) >= static_cast<int>(pathSize)) {
+			return false;
+		}
+		if (!file_exists(path)) {
+			return true;
+		}
+	}
+	return false;
+}
+
+return_codes_t DumpBanner(flashcart_core::Flashcart* cart)
+{
+	if (!banner_ops::HasAvailableOperation(cart)) {
+		flashcart_core::platform::logMessage(flashcart_core::LOG_ERR,
+			"DumpBanner: cart has no valid banner backup profile");
+		return FLASH_OP_FAILED;
+	}
+	if (mount_fat() != ALL_OK) { return FAT_MOUNT_FAILED; }
+
+	uint8_t* const banner = new(std::nothrow) uint8_t[banner_ops::kSourceBannerSize];
+	if (!banner) {
+		flashcart_core::platform::logMessage(flashcart_core::LOG_ERR,
+			"DumpBanner: banner buffer allocation failed");
+		return MEM_ALLOC_FAILED;
+	}
+	if (!banner_ops::ReadBanner(cart, banner, banner_ops::kSourceBannerSize)) {
+		delete[] banner;
+		return FLASH_OP_FAILED;
+	}
+
+	const banner_ops::SourceValidation validation = banner_ops::ValidateSourceBanner(
+		banner, banner_ops::kSourceBannerSize);
+	if (validation != banner_ops::SourceValidation::Valid) {
+		flashcart_core::platform::logMessage(flashcart_core::LOG_ERR,
+			"DumpBanner: driver returned an invalid v1 banner");
+		delete[] banner;
+		return BannerValidationResult(validation);
+	}
+
+	char path[128];
+	if (!BannerBackupPath(cart->getShortName(), path, sizeof(path))) {
+		flashcart_core::platform::logMessage(flashcart_core::LOG_ERR,
+			"DumpBanner: couldn't choose a new backup path");
+		delete[] banner;
+		return FILE_OPEN_FAILED;
+	}
+	FILE* file = fopen(path, "wb");
+	if (!file) {
+		flashcart_core::platform::logMessage(flashcart_core::LOG_ERR,
+			"DumpBanner: couldn't create %s", path);
+		delete[] banner;
+		return FILE_OPEN_FAILED;
+	}
+	const bool wrote = fwrite(banner, 1, banner_ops::kSourceBannerSize, file)
+		== banner_ops::kSourceBannerSize;
+	const int closeResult = fclose(file);
+	if (!wrote || closeResult != 0) {
+		flashcart_core::platform::logMessage(flashcart_core::LOG_ERR,
+			"DumpBanner: couldn't finish %s", path);
+		delete[] banner;
+		remove(path);
+		return FILE_IO_FAILED;
+	}
+	delete[] banner;
+	flashcart_core::platform::logMessage(flashcart_core::LOG_NOTICE,
+		"DumpBanner: saved validated v1 banner to %s", path);
+	return ALL_OK;
+}
+
 return_codes_t ValidateFlashImage(flashcart_core::Flashcart* cart, const char* filepath)
 {
 	const size_t flashSize = cart->getMaxLength();
@@ -452,13 +512,12 @@ static return_codes_t LoadBannerFile(flashcart_core::Flashcart* cart,
 {
 	*outBanner = nullptr;
 	*outBannerSize = 0;
-	const flashcart_core::BannerWriteProfile* const profile =
-		cart->getBannerWriteProfile();
-	if (!profile || profile->bannerSize == 0) {
+	if (!banner_ops::HasAvailableOperation(cart)) {
 		flashcart_core::platform::logMessage(flashcart_core::LOG_ERR,
 			"BannerFile[%s]: cart has no valid banner-write profile", phase);
 		return FLASH_OP_FAILED;
 	}
+	const uint32_t bannerSize = banner_ops::kSourceBannerSize;
 
 	if (mount_fat() != ALL_OK) { return FAT_MOUNT_FAILED; }
 	flashcart_core::platform::logMessage(flashcart_core::LOG_NOTICE,
@@ -478,15 +537,15 @@ static return_codes_t LoadBannerFile(flashcart_core::Flashcart* cart,
 		return FILE_IO_FAILED;
 	}
 	const long fileSize = ftell(file);
-	if (fileSize < 0 || static_cast<uint32_t>(fileSize) != profile->bannerSize) {
+	if (fileSize < 0 || static_cast<uint32_t>(fileSize) != bannerSize) {
 		flashcart_core::platform::logMessage(flashcart_core::LOG_ERR,
 			"BannerFile[%s]: expected %lu bytes, got %ld",
-			phase, static_cast<unsigned long>(profile->bannerSize), fileSize);
+			phase, static_cast<unsigned long>(bannerSize), fileSize);
 		fclose(file);
 		return BANNER_SIZE_INVALID;
 	}
 
-	uint8_t* const banner = new(std::nothrow) uint8_t[profile->bannerSize];
+	uint8_t* const banner = new(std::nothrow) uint8_t[bannerSize];
 	if (!banner) {
 		flashcart_core::platform::logMessage(flashcart_core::LOG_ERR,
 			"BannerFile[%s]: banner buffer allocation failed", phase);
@@ -495,7 +554,7 @@ static return_codes_t LoadBannerFile(flashcart_core::Flashcart* cart,
 	}
 
 	if (fseek(file, 0, SEEK_SET) != 0
-		|| fread(banner, 1, profile->bannerSize, file) != profile->bannerSize) {
+		|| fread(banner, 1, bannerSize, file) != bannerSize) {
 		flashcart_core::platform::logMessage(flashcart_core::LOG_ERR,
 			"BannerFile[%s]: couldn't read %s", phase, filepath);
 		delete[] banner;
@@ -504,27 +563,24 @@ static return_codes_t LoadBannerFile(flashcart_core::Flashcart* cart,
 	}
 	fclose(file);
 
-	const NdsBannerValidation validation = ValidateNdsBannerV1(banner, profile->bannerSize);
-	if (validation != NdsBannerValidation::Valid) {
-		const char *reason = validation == NdsBannerValidation::WrongSize
+	const banner_ops::SourceValidation validation = banner_ops::ValidateSourceBanner(
+		banner, bannerSize);
+	if (validation != banner_ops::SourceValidation::Valid) {
+		const char *reason = validation == banner_ops::SourceValidation::WrongSize
 			? "size is not 2,112 bytes"
-			: validation == NdsBannerValidation::WrongVersion
+			: validation == banner_ops::SourceValidation::WrongVersion
 				? "version is not Regular DS v1"
 				: "checksum does not match";
 		flashcart_core::platform::logMessage(flashcart_core::LOG_ERR,
 			"BannerFile[%s]: %s", phase, reason);
 		delete[] banner;
-		if (validation == NdsBannerValidation::WrongSize) {
-			return BANNER_SIZE_INVALID;
-		}
-		return validation == NdsBannerValidation::WrongVersion
-			? BANNER_VERSION_INVALID : BANNER_CRC_INVALID;
+		return BannerValidationResult(validation);
 	}
 	flashcart_core::platform::logMessage(flashcart_core::LOG_NOTICE,
 		"BannerFile[%s]: accepted NDS v1 banner (%lu bytes)",
-		phase, static_cast<unsigned long>(profile->bannerSize));
+		phase, static_cast<unsigned long>(bannerSize));
 	*outBanner = banner;
-	*outBannerSize = profile->bannerSize;
+	*outBannerSize = bannerSize;
 	return ALL_OK;
 }
 
@@ -554,7 +610,7 @@ return_codes_t WriteBanner(flashcart_core::Flashcart* cart, const char* filepath
 		"Writing and verifying the banner...");
 	ShowProgress(BOTTOM_SCREEN, 0, 1, "Writing banner");
 
-	const bool written = cart->writeBanner(banner, bannerSize);
+	const bool written = banner_ops::WriteBanner(cart, banner, bannerSize);
 	delete[] banner;
 	if (!written) {
 		return FLASH_OP_FAILED;

@@ -215,7 +215,7 @@ private:
 			}
 			return (writeProtected == 0);
 		}
-		
+
         for (unsigned int i = 0; i < sizeof(supported_flashchips) / 2; ++i)
             if (supported_flashchips[i] == (uint16_t)flashchip)
                 return true;
@@ -321,7 +321,7 @@ private:
                 erase_blocks = std::vector<uint32_t>(9, 0x1000);
                 erase_blocks[0] = 0x8000;
                 break;
-			
+
 			case 0xED01:
 				erase_blocks = std::vector<uint32_t>(4, 0x4000);
 				break;

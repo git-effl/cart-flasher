@@ -230,7 +230,7 @@ public:
               return false;
           }
         } while(std::memcmp(resp1, resp2, 0x200));
-        
+
         switch (sw_rev) {
             case 0x00000505:
                 logMessage(LOG_ERR, "r4isdhc.hk: Anything below 0x00000605 is not supported.");
@@ -247,7 +247,7 @@ public:
         logMessage(LOG_NOTICE, "r4isdhc.hk: SW Revision = %08x", sw_rev);
         return true;
     }
- 
+
     void shutdown() {
         logMessage(LOG_INFO, "r4isdhc.hk: Shutdown");
     }
@@ -349,7 +349,7 @@ public:
                 /*main data area (8k) from 0x40000, move to 0x5000 (len = 7600h)*/
                 block_0[0x627] = 0x30;              block_0[0x628] = 0xC0;
                 block_0[0x62A] = 0;                 block_0[0x62B] = 0xE1;
-                
+
                 /*Below enables us to finally have ntrboot on header 7.0x so we don't need*/
                 /*to borrow header 5.06. Not sure what the original instruction is for*/
                 /*(loop until the 7th bit of InputPort 0x17 is 1) on rev 7.0x but we are changing it to*/
@@ -374,7 +374,7 @@ public:
         memcpy(block_0 + 0x5000, firm + 0x200, firm_size - 0x200);
         encrypt_memcpy(block_0 + 0x1200, block_0 + 0x1200, 0xEE00);
         const bool injected = injectFlash(0, 0x10000, 0, block_0, 0x10000, false);
-        
+
         free(block_0);
         return injected;
     }

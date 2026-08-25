@@ -6,6 +6,14 @@ cd "$(dirname "$0")"
 
 BUILD_LOG="build.log"
 
+echo "Initializing pinned flashcart_core submodule"
+git submodule sync -- arm9/vendor/flashcart_core
+git submodule update --init --checkout arm9/vendor/flashcart_core
+if [ ! -f arm9/vendor/flashcart_core/device.h ]; then
+    echo "Error: flashcart_core initialization failed."
+    exit 1
+fi
+
 # Check for Docker installation
 if ! command -v docker &> /dev/null; then
     echo "Error: docker is not installed. Please install Docker."

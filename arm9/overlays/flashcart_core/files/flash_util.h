@@ -6,7 +6,7 @@
 namespace flashcart_core {
 
 template<
-            typename FlashcartClass, 
+            typename FlashcartClass,
             unsigned int readSizePower,
             /// Reads a page from the flash at address `addr`.
             ///
@@ -49,7 +49,7 @@ class FlashUtil {
     }
 
 public:
-    static bool read(FlashcartClass *const fc, 
+    static bool read(FlashcartClass *const fc,
                      const std::uint32_t start_address, const std::uint32_t length, void *const destVoid,
                      const bool progress = false, const char *const progress_str = "Reading flash") {
         constexpr bool freeReadSize = readSize == 1;
@@ -63,7 +63,7 @@ public:
         if (freeReadSize && !progress) {
             return (fc->*readFn)(start_address, length, dest);
         }
-        
+
         if (progress) {
             platform::showProgress(cur, length, progress_str);
         }
@@ -89,7 +89,7 @@ public:
                 std::memcpy(dest + cur, cur_dest, cur_blockSize);
                 std::free(cur_dest);
             }
-            
+
             cur += cur_blockSize;
 
             if (progress) {
