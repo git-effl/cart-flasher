@@ -23,32 +23,14 @@ Download the latest [`cart_flasher.nds`](https://github.com/tasken/cart-flasher/
 > Keep a copy of your first dump somewhere off the SD card. Dumping the same cart again overwrites the old file.
 
 > [!NOTE]
-> An Ace3DS+ with the validated AL3E layout also offers `Back up DS banner` and
-> `Write DS banner`. The writer accepts only a CRC-valid, 0x840-byte NDS v1
-> banner `.bin`, validates the known primary page map, the header's virtual
-> banner pointer, current banner layout, and selected chip capacity, then
-> read-modifies its two 4 KiB erase blocks while preserving neighbouring bytes
-> and reads both full blocks back to verify them. It is unavailable for every
-> other cart layout. In
-> [DS Banner Maker](https://tasken.github.io/banner-maker/), create a new banner
-> from an image or re-edit an exported banner backup. It always downloads a
-> compatible 2,112-byte NTR v1 banner with a 32×32 icon, 15 visible colors,
-> transparent palette index 0, and valid CRC16 checks.
-> `Back up DS banner` saves a reusable v1 banner as
-> `/cart-backups/banners/Ace3DSPlus-banner.bin`, preserving earlier backups with
-> numbered suffixes. `Write DS banner` opens that same folder.
-
-> [!NOTE]
-> The same `Back up DS banner` and `Write DS banner` actions are offered for
-> the exact 2 MiB R4iSDHC.com 20XX layout. It verifies the complete expected
-> Bomberman header and current v3 stock or valid v1 custom banner before
-> exposing the action, then replaces only the v1-sized banner prefix and
-> verifies every affected 4 KiB block. A v3-to-v1 change also clears the unused
-> v3 extension through the next block. A valid v1 custom banner remains
-> eligible for later banner changes.
-> `Back up DS banner` exports a reusable v1 copy of either the stock v3 or
-> current v1 banner as `/cart-backups/banners/r4isdhc-banner.bin`. `Write DS
-> banner` opens that same folder.
+> Some supported carts offer `Back up DS banner` and `Write DS banner` when
+> their layout is safe to change. Banner backups go in `cart-backups/banners`;
+> the app keeps older backups instead of replacing them. Use
+> [DS Banner Maker](https://tasken.github.io/banner-maker/) to create a new
+> banner or edit a backup, then select it with `Write DS banner`.
+>
+> The app checks both the cart and banner before writing, changes only the
+> banner area, and verifies the result afterward.
 
 ## Supported carts
 
