@@ -440,7 +440,7 @@ void menu_lvl2(Flashcart* cart)
 		// underneath them) actually changed, not every single frame — redrawing
 		// full-width rectangles unconditionally with no vsync tears visibly.
 		if (dirty) {
-			DrawString(TOP_SCREEN, FONT_WIDTH, 2 * FONT_HEIGHT, COLOR_GREY, "Cart operations");
+			DrawString(TOP_SCREEN, FONT_WIDTH, 2 * FONT_HEIGHT, COLOR_GREY, "Flashrom operations");
 			DrawListRow(TOP_SCREEN, 3 * FONT_HEIGHT, menu_sel == 0, COLOR_ACCENT, "Back up flash");	//0
 			DrawListRow(TOP_SCREEN, 4 * FONT_HEIGHT, menu_sel == 1, COLOR_TINTEDRED, "Write flash");	//1
 			if (hasBannerTools) {
