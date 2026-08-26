@@ -72,7 +72,7 @@ Replay DS).
 
 ## Building
 > [!WARNING]
-> Before building,get copies of Blowfish keys (NTR,Retail,Dev) from a DSi/DS BIOS backup,
+> Before building,get copies of Blowfish keys (NTR,Retail,Dev) from a DSi/DS BIOS backup,and place them at arm9/data.
 > This application does not endorse piracy and other illegal activities.
 ```shell
 git clone https://github.com/tasken/cart-flasher.git
