@@ -71,9 +71,9 @@ Replay DS).
 > If you saw `SD card init failed!`, there is no log to send. Take a photo of the screen and attach that instead.
 
 ## Building
-> [!NOTE]
-> Before building,get copies of Blowfish keys (NTR,Retail,Dev) from a DSi/DS BIOS backup.
-> This application does not endorse piracy and other illegal activities!
+> [!WARNING]
+> Before building,get copies of Blowfish keys (NTR,Retail,Dev) from a DSi/DS BIOS backup,
+> This application does not endorse piracy and other illegal activities.
 ```shell
 git clone https://github.com/tasken/cart-flasher.git
 cd cart-flasher/
